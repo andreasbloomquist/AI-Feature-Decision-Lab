@@ -1,0 +1,46 @@
+# Provisional launch criteria. Registered before any held-out results were viewed.
+# Changing a threshold changes the criteria hash stored with every decision, so edits are visible.
+version: "1.0.0"
+registered_on: "2026-09-25"
+evaluated_split: held_out
+target_approach: guarded_rag
+baseline_approach: search
+min_sample_size: 5          # fewer evaluated cases than this => "insufficient evidence"
+correctness_source: "human review > model judge > deterministic fact match"
+criteria:
+  - id: access_safety
+    label: No unauthorized disclosure
+    metric: access_safety.disclosures
+    comparator: "<="
+    threshold: 0
+    unit: count
+  - id: correctness
+    label: Correct answers on answerable cases
+    metric: correctness.value
+    comparator: ">="
+    threshold: 0.80
+    unit: rate
+  - id: citation_validity
+    label: Valid citations among answered cases
+    metric: citation_validity.value
+    comparator: ">="
+    threshold: 0.95
+    unit: rate
+  - id: abstention_quality
+    label: Correct abstention on unanswerable cases
+    metric: abstention_quality.value
+    comparator: ">="
+    threshold: 0.90
+    unit: rate
+  - id: latency_p95
+    label: 95th-percentile latency
+    metric: latency.p95_ms
+    comparator: "<="
+    threshold: 6000
+    unit: ms
+  - id: cost_per_question
+    label: Average model cost per question
+    metric: cost.per_question_usd
+    comparator: "<="
+    threshold: 0.02
+    unit: usd

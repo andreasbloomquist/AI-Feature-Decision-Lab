@@ -1,0 +1,22 @@
+# Evaluation dataset metadata. The cases live in cases.jsonl (one JSON object per line).
+dataset_id: northstar-policy-qa
+version: "1.0.0"
+created: "2026-09-25"
+cases_file: cases.jsonl
+size: 60
+splits:
+  development: 15   # may be inspected and used to tune prompts and retrieval settings
+  held_out: 45      # used for the launch decision; do not tune against it
+composition:
+  single_document: 24
+  multi_document: 12
+  outdated_policy: 8
+  unanswerable: 8
+  role_access: 8
+answerability_values: [answerable, unanswerable, access_denied]
+fact_matching: >
+  Each required fact lists aliases in match_any. The deterministic grader normalizes text
+  (lowercase, strips thousands separators, collapses whitespace) and counts a fact as present
+  when any alias appears as a whole word or phrase. This is deliberately strict about figures
+  and lenient about wording; the optional model judge and human review cover paraphrase and
+  contradiction.

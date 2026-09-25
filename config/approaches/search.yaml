@@ -1,0 +1,11 @@
+approach: search
+version: search-v1
+description: Role-filtered BM25 over active passages; returns the best-matching sentence with a citation. No model call.
+retrieval:
+  top_k: 3
+  k1: 1.5
+  b: 0.75
+# Abstain when the best passage's BM25 score is below this value.
+# Chosen on the development split only (see docs/evaluation_report.md, "Search threshold").
+min_score: 5.0
+max_sentences: 2

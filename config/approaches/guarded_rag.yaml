@@ -1,0 +1,18 @@
+approach: guarded_rag
+version: guarded-rag-v1
+description: Same retrieval, strict answer contract, post-generation citation validation, abstains on weak evidence.
+prompt_file: prompts/guarded_rag.v1.md
+retrieval:
+  top_k: 5
+  k1: 1.5
+  b: 0.75
+# If no authorized passage scores at least this much, abstain without calling the model.
+retrieval_floor: 2.0
+generation:
+  max_tokens: 2000
+validation:
+  # Cited passages must be in the retrieved, authorized, active set; otherwise the answer is withheld.
+  require_citations: true
+  reject_invalid_citations: true
+  # Sentences of at least this many words without a citation are reported as warnings.
+  uncited_sentence_min_words: 8
