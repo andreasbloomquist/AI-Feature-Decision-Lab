@@ -10,7 +10,7 @@ These choices are not the best for every project. They are the best fit for this
 4. **The scale is small.** There are 21 documents, 105 passages and 60 questions.
 5. **It is a portfolio piece, so the code must be short enough for a reviewer to read.** A few hundred lines of our own code are preferable to a framework whose behaviour has to be taken on trust.
 
-The spec fixed some choices: React, TypeScript and Vite for the frontend, Python and FastAPI for the backend, SQLite for storage, Markdown for policy documents, BM25 or an equivalent for keyword retrieval, and one real LLM provider through its official SDK. For those, this log explains how each one is used and what it would take to change it. For everything else, it explains why the chosen option was picked.
+The [project requirements](PRD.md#requirements) fixed some choices: React, TypeScript and Vite for the frontend, Python and FastAPI for the backend, SQLite for storage, Markdown for policy documents, BM25 or an equivalent for keyword retrieval, and one real LLM provider through its official SDK. For those, this log explains how each one is used and what it would take to change it. For everything else, it explains why the chosen option was picked.
 
 Each entry ends with **Revisit when**, the condition under which the decision should change.
 
@@ -41,6 +41,7 @@ Each entry ends with **Revisit when**, the condition under which the decision sh
 | 21 | Testing | pytest, Vitest, Testing Library, and a local fake of the provider API |
 | 22 | Developer workflow | Makefile and virtualenv, no Docker; GitHub Actions for CI |
 | 23 | Screenshots | Playwright, run once and not added as a project dependency |
+| 24 | Code-quality tooling | ruff, ESLint, strict TypeScript, all enforced in CI |
 
 ---
 
@@ -55,8 +56,8 @@ Each entry ends with **Revisit when**, the condition under which the decision sh
 | Option | Why not |
 |---|---|
 | Separate frontend and backend deployments | Adds a second process, CORS configuration and more setup steps, with no benefit for a local demo. |
-| A full-stack framework such as Next.js, Remix or SvelteKit | The spec requires a Python backend. Running a Node server as well as Python would add a runtime that nothing needs. |
-| Server-rendered templates (Jinja plus HTMX) | Fine for forms. It is weaker for interactive views like side-by-side answers, filters and the source drawer, and the spec asks for React. |
+| A full-stack framework such as Next.js, Remix or SvelteKit | The requirements call for a Python backend (R1). Running a Node server as well as Python would add a runtime that nothing needs. |
+| Server-rendered templates (Jinja plus HTMX) | Fine for forms. It is weaker for interactive views like side-by-side answers, filters and the source drawer, and the requirements call for React (R1). |
 | Streamlit or Gradio | Fastest way to demo a model, but the result looks like a notebook rather than a small internal product, and Inspect-style views and routing are hard to control. |
 
 **Revisit when** the lab is deployed for other people to use. At that point the UI should be served from a CDN or static host, with the API behind authentication.
@@ -65,7 +66,7 @@ Each entry ends with **Revisit when**, the condition under which the decision sh
 
 **Decision.** FastAPI 0.141, Pydantic 2 for request validation, and Uvicorn as the server. App startup uses FastAPI's `lifespan` handler to seed the fixture run.
 
-**Why.** The spec requires FastAPI, and it suits this project. Request models such as `AskRequest` and `ReviewRequest` reject bad input (unknown approach, invalid verdict, a 600-character question) before our code runs. The endpoints are plain functions that are easy to test with `TestClient`. It also produces an OpenAPI schema at `/docs` for free.
+**Why.** FastAPI is required (R1), and it suits this project. Request models such as `AskRequest` and `ReviewRequest` reject bad input (unknown approach, invalid verdict, a 600-character question) before our code runs. The endpoints are plain functions that are easy to test with `TestClient`. It also produces an OpenAPI schema at `/docs` for free.
 
 **Alternatives considered.**
 
@@ -74,7 +75,7 @@ Each entry ends with **Revisit when**, the condition under which the decision sh
 | Flask | Would work, but request validation and schema docs would have to be added by hand. |
 | Django with Django REST Framework | Its ORM, admin site and migrations are heavy for five tables and about a dozen endpoints. |
 | Litestar or Starlette alone | Capable, but FastAPI is more widely known, which matters for a portfolio reviewer. |
-| A Node backend (Express, Fastify) | The spec requires Python. Python is also where the LLM, evaluation and statistics code sits most naturally. |
+| A Node backend (Express, Fastify) | Python is required (R1). Python is also where the LLM, evaluation and statistics code sits most naturally. |
 
 **Revisit when** requests need to run concurrently at scale. The model calls are synchronous because the SDK's sync client is simple and the evaluation runner parallelises with threads. A high-traffic service would switch to `AsyncAnthropic` and async endpoints.
 
@@ -83,11 +84,13 @@ Each entry ends with **Revisit when**, the condition under which the decision sh
 **Decision.** SQLite accessed with Python's built-in `sqlite3` module (`backend/app/db.py`). There are five tables: `runs`, `responses`, `reviews`, `ask_log` and `configuration`. Responses, grades and configuration snapshots are stored as JSON text. Each finished run is also written to `results/runs/<run_id>.json`.
 
 **Why.**
-- SQLite is required by the spec. It needs no server and is a single file you can delete with `make clean-db`.
+- SQLite is required (R1). It needs no server and is a single file you can delete with `make clean-db`.
 - Using the standard library instead of an ORM keeps the schema visible in one place: the `SCHEMA` string.
 - Storing responses as JSON documents means a new field on the response object doesn't need a migration, while the columns we filter on (`run_id`, `case_id`, `approach`) remain real columns.
 - The JSON export means a live run can be committed to git and read without the app.
 - Runs are only ever inserted, never updated in place, and reviews live in their own table. That is how "re-running creates a new run" and "human review preserves the automated score" are enforced.
+- Each connection enables foreign keys, write-ahead logging and a busy timeout, so the CLI runner and the API server can use the same file at the same time.
+- Reads go through one module, `results.py`, which joins responses to their cases and computes metrics. The API, the decision logic and the report generator all use it, so a response row has the same shape everywhere.
 
 **Alternatives considered.**
 
@@ -97,7 +100,7 @@ Each entry ends with **Revisit when**, the condition under which the decision sh
 | SQLAlchemy or SQLModel | An extra layer for five tables and a handful of queries. Readers would learn the ORM before they could read the storage code. |
 | DuckDB | Excellent for analysing results, but the app mostly makes small transactional writes (one review, one response), which is SQLite's strength. |
 | JSON or CSV files only | Easy to read, but filtering, joining reviews to responses and making concurrent writes from worker threads would all have to be written by hand. |
-| A hosted experiment tracker (Weights & Biases, MLflow) | Adds an account or server, and the spec asks for SQLite. |
+| A hosted experiment tracker (Weights & Biases, MLflow) | Adds an account or server, and SQLite is required (R1). |
 
 **Revisit when** several people use the tool at once or runs grow to tens of thousands of rows. At that point, move to Postgres, add Alembic migrations, and promote frequently filtered JSON fields such as `outcome` and `error_type` to columns.
 
@@ -105,7 +108,7 @@ Each entry ends with **Revisit when**, the condition under which the decision sh
 
 **Decision.** Each policy is a `.md` file whose front matter holds `document_id`, `title`, `owner`, `effective_date`, `status`, `superseded_by`, `access_groups` and `country`. The loader rejects files that are missing required fields or mark a document superseded without saying what replaced it. Each `##` section becomes a passage with an ID such as `NS-TRV-2026#3`.
 
-**Why.** Markdown is what policy owners already write, and the spec requires it. Splitting by section gives passages that mean something to a person ("Trip approvals") and are stable to cite. A reviewer clicking a citation lands on a heading they recognise, not an arbitrary 512-token slice.
+**Why.** Markdown is what policy owners already write, and it is required (R1). Splitting by section gives passages that mean something to a person ("Trip approvals") and are stable to cite. A reviewer clicking a citation lands on a heading they recognise, not an arbitrary 512-token slice.
 
 **Alternatives considered.**
 
@@ -123,7 +126,7 @@ Each entry ends with **Revisit when**, the condition under which the decision sh
 **Decision.** A roughly 100-line BM25 implementation in `backend/app/retrieval.py`, with settings k1 = 1.5 and b = 0.75, a small stop-word list, light plural stemming, and currency-aware tokens so `$2,000` becomes `$2000`. The document title and section heading are indexed along with the passage text. All three approaches use the same retriever.
 
 **Why.**
-- The spec asks for BM25 or an equivalent local implementation.
+- BM25 or an equivalent local implementation is required (R1).
 - Writing it ourselves makes two things possible that matter here. First, each role's index is built only from documents that role can read (decision 6), so term statistics are never computed over restricted text. Second, a reviewer can read exactly how scores are calculated, and the search threshold in `config/approaches/search.yaml` refers to scores they can reproduce.
 - With 105 passages, search takes well under a millisecond, so there is nothing to optimise.
 - Using identical retrieval for all three approaches keeps the comparison fair: any difference comes from generation and guarding, not retrieval.
@@ -146,13 +149,13 @@ Each entry ends with **Revisit when**, the condition under which the decision sh
 ## 6. Access control: a separate index per role, built after filtering
 
 **Decision.** Four roles (`employee`, `hr`, `finance`, `admin`) map to access groups. `Retriever.index_for(role)` builds a BM25 index containing only the active documents that role may read. The same check is applied again at three more points:
-- **Citation validation:** an unauthorized citation is invalid, and its title is never returned.
-- **Source previews:** `GET /api/documents/{id}?role=` returns 403 without the title or text.
+- **Citation validation:** an unauthorized citation is invalid. Its ID is replaced with `[restricted]`, and any mention of a restricted ID in the answer text is redacted, matching IDs regardless of case.
+- **Source previews:** `GET /api/documents/{id}?role=` returns the same 404 for a restricted document as for one that doesn't exist, so a user can't probe for restricted IDs. In the Ask response, citations to a restricted or nonexistent document both show the reason "unavailable".
 - **Grading:** leaked document IDs, known restricted facts, and 8-word verbatim passages are counted as disclosures.
 
 When a restricted question is asked, the assistant says it couldn't find the answer in the policies available to the user. It doesn't say "that's in an HR-only document".
 
-**Why.** The spec requires access control **before retrieval**. Filtering results after retrieval would still let restricted text affect scoring (through IDF statistics) and would rely on the filter never being skipped. Filtering after generation would rely on the model not repeating what it saw. With a per-role index, restricted text is never in scope, so it cannot leak through snippets, context or scores. Saying "not found" rather than "restricted" avoids confirming that a sensitive document exists.
+**Why.** Access control must apply **before retrieval** (R3). Filtering results after retrieval would still let restricted text affect scoring (through IDF statistics) and would rely on the filter never being skipped. Filtering after generation would rely on the model not repeating what it saw. With a per-role index, restricted text is never in scope, so it cannot leak through snippets, context or scores. Saying "not found" rather than "restricted" avoids confirming that a sensitive document exists.
 
 **Alternatives considered.**
 
@@ -163,7 +166,7 @@ When a restricted question is asked, the assistant says it couldn't find the ans
 | Metadata filters in a vector database or Elasticsearch document-level security | The right tool at scale, and equivalent to our approach, but we have no such service (decision 5). |
 | A policy engine (Open Policy Agent, Cerbos, Oso, AWS Verified Permissions) | Useful when rules are complex and shared across services. Four roles and one group check don't need one. |
 | Real authentication (OIDC or SSO) | Out of scope in the PRD. Roles are chosen in the UI and treated as if they were authenticated. |
-| Return `access_denied` when a restricted document would have matched | Detecting that requires searching restricted documents, which contradicts "before retrieval", and the message would confirm that the document exists. The `access_denied` status is still used for 403 previews. |
+| Return `access_denied` when a restricted document would have matched | Detecting that requires searching restricted documents, which contradicts "before retrieval", and the message would confirm that the document exists. The `access_denied` status appears only in the source viewer's refusal. |
 
 **Revisit when** real identity is connected. Map identity-provider groups to `ROLE_GROUPS` and add row-level access if documents gain per-person permissions.
 
@@ -182,7 +185,7 @@ When a restricted question is asked, the assistant says it couldn't find the ans
 **Decision.** `AnthropicProvider` in `backend/app/llm.py` uses `anthropic` 1.x (`client.messages.create`). It maps the SDK's typed exceptions (`APITimeoutError`, `RateLimitError`, `AuthenticationError`, `BadRequestError`, `APIStatusError`, `APIConnectionError`) to short error kinds shown in the UI. It records input and output tokens from `response.usage`, and treats `stop_reason == "refusal"` as an error. The key is read by the SDK from `ANTHROPIC_API_KEY`. Our code never handles, logs or returns it.
 
 **Why.**
-- The spec asks for one real provider through its official SDK, configured by environment variables.
+- One real provider through its official SDK, configured by environment variables, is required (R1).
 - The official SDK provides typed errors, which is how a timeout becomes a visible `timeout` error rather than a crash. It also provides configurable timeouts and retries, and accurate token usage for cost estimates.
 - All provider code sits behind a small `LLMProvider` interface (`generate(system, user, max_tokens, fixture_key)`), so the fixture and test providers share the pipeline exactly, and another provider is a single class to add.
 
@@ -190,10 +193,10 @@ When a restricted question is asked, the assistant says it couldn't find the ans
 
 | Option | Why not |
 |---|---|
-| OpenAI, Google Gemini, Mistral or Cohere SDKs | All would work. The spec asks for one provider, and adding a second through the same interface is a small change. The comparison is between three approaches, not between vendors. |
+| OpenAI, Google Gemini, Mistral or Cohere SDKs | All would work. One provider is required (R1), and adding a second through the same interface is a small change. The comparison is between three approaches, not between vendors. |
 | Cloud-hosted Claude (Amazon Bedrock, Google Vertex AI) | Useful when a company must keep traffic in its cloud account. Needs cloud credentials, which works against "add one key and run". |
 | Local models (Ollama, llama.cpp, vLLM) | No per-token cost and data stays local, but requires a multi-GB download and a capable machine, and quality on strict citation contracts varies a lot. A good future comparison row, not the default. |
-| Raw HTTP with `requests` or `httpx` | Loses typed errors and retries, and the spec asks for the official SDK. |
+| Raw HTTP with `requests` or `httpx` | Loses typed errors and retries, and the official SDK is required (R1). |
 
 **Revisit when** the company has a preferred or contracted provider, or needs data residency. Add a provider class and set `LLM_PROVIDER`.
 
@@ -206,7 +209,7 @@ When a restricted question is asked, the assistant says it couldn't find the ans
 - **Configuration:** everything is overridable in `.env` (`LLM_MODEL`, `LLM_EFFORT`, `JUDGE_MODEL`, `LLM_TIMEOUT_S`, `LLM_MAX_RETRIES`). Prices live in `config/pricing.yaml`.
 
 **Why.**
-- **Answer model:** Opus is the capable default for following a strict contract ("cite every claim, abstain otherwise"). Low effort keeps latency and cost within the six-second p95 and $0.02-per-question criteria for short, well-scoped questions.
+- **Answer model:** Opus is the capable default for following a strict contract ("cite every claim, abstain otherwise"). Low effort is chosen on the *hypothesis* that it keeps short, well-scoped questions within the six-second p95 and $0.02-per-question criteria. No live run has tested that yet, and the decision view will say so if it is wrong.
 - **Judge model:** a cheaper model from a different tier. Judging is a narrower task, and using a different model than the one being graded reduces the risk of a model grading itself favourably.
 - **Max tokens:** 2,000 leaves room for the model's internal reasoning, so answers aren't cut off halfway.
 
@@ -230,7 +233,7 @@ When a restricted question is asked, the assistant says it couldn't find the ans
 | LangChain or LangGraph | Quick for prototypes, but its abstractions would hide the exact prompt and control flow we are trying to measure. |
 | LlamaIndex | Strong ingestion and indexing, but the same concern, and our corpus is tiny. |
 | Haystack | A clear pipeline model and good for production search, but more setup than 21 documents justify. |
-| LiteLLM (one interface for many providers) | Useful when comparing vendors. The spec asks for one provider through its official SDK, and our own interface is about 20 lines. |
+| LiteLLM (one interface for many providers) | Useful when comparing vendors. One provider through its official SDK is required (R1), and our own interface is about 20 lines. |
 | DSPy (automatic prompt optimisation) | Interesting, but optimising prompts automatically against a small dataset invites overfitting, and the held-out set must not be tuned against. |
 
 **Revisit when** the assistant grows into a multi-step agent (looking things up, filing requests). Orchestration code then earns its keep.
@@ -246,7 +249,7 @@ When a restricted question is asked, the assistant says it couldn't find the ans
 
 **Why.**
 - Inline IDs are easy for a model to produce and for a person to read in the raw output. They also make "cited something it wasn't given" a simple set check.
-- Validating after generation is what the spec requires, and it works the same for every provider.
+- Validating after generation is required (R4), and it works the same for every provider.
 - The two-line contract is easy to parse. If it can't be parsed, the response becomes a recorded `unparseable_output` error rather than a guess.
 
 **Alternatives considered.**
@@ -266,7 +269,7 @@ When a restricted question is asked, the assistant says it couldn't find the ans
 - **Retries:** one automatic SDK retry for connection errors, 429s and 5xx responses.
 - **No repair call:** when Guarded RAG's answer fails validation, we don't make a second call to fix it.
 
-**Why.** An experiment has to measure one configured model. A silent fallback would mix two models' answers in one run. A repair call is explicitly ruled out by the spec, would hide the failure rate, and would double the cost of exactly the cases most likely to be wrong.
+**Why.** An experiment has to measure one configured model. A silent fallback would mix two models' answers in one run. A repair call is explicitly ruled out (R4), would hide the failure rate, and would double the cost of exactly the cases most likely to be wrong.
 
 **Alternatives considered.** Enable fallback for production use, where availability matters more than a clean measurement; the refusal is then logged and the served model recorded. Retry validation failures with a stricter prompt; rejected for the reasons above.
 
@@ -280,7 +283,7 @@ When a restricted question is asked, the assistant says it couldn't find the ans
 - **Decision page:** fixture runs get the verdict "demonstration only" and neutral "Demo" badges instead of green or red.
 - **Source of the outputs:** `scripts/build_fixtures.py` writes them and lists which cases deliberately show failure modes.
 
-**Why.** The spec requires a keyless demo that is visibly labelled and never presented as measurement. Replaying raw text through the real pipeline, rather than replaying finished graded results, means fixture mode also exercises the validators. For example, the fabricated citation in case S09 is actually rejected by the code. And the UI shows exactly the same components in both modes.
+**Why.** A keyless demo that is visibly labelled and never presented as measurement is required (R5). Replaying raw text through the real pipeline, rather than replaying finished graded results, means fixture mode also exercises the validators. For example, the fabricated citation in case S09 is actually rejected by the code. And the UI shows exactly the same components in both modes.
 
 **Alternatives considered.**
 
@@ -289,7 +292,7 @@ When a restricted question is asked, the assistant says it couldn't find the ans
 | Record real model responses once and commit them (VCR-style cassettes) | This would be the best option for realism, but no key was available when the project was built. If a live run is made, `results/runs/*.json` fills that role. |
 | A mock that returns the reference answer | Too clean. It would show no failure modes, making Inspect and the memo example empty. |
 | A small local model for the demo | Big download, slow, and its results could be mistaken for real measurements. |
-| Hide the RAG approaches when there's no key | Reviewers couldn't explore the interface, which the spec asks for. |
+| Hide the RAG approaches when there's no key | Reviewers couldn't explore the interface, which R5 asks for. |
 
 **Revisit when** a live run exists. Consider regenerating fixtures from real, lightly curated model outputs so the demo looks like real behaviour, keeping the demo label.
 
@@ -321,9 +324,12 @@ When a restricted question is asked, the assistant says it couldn't find the ans
 
 ## 15. Evaluation tooling: our own runner rather than an eval framework
 
-**Decision.** `backend/app/evaluation.py` runs every case and approach in a thread pool. Each task is isolated: any exception becomes a recorded `internal_error` response. Every run stores the corpus hash, dataset hash, prompt versions, model configuration and a full configuration snapshot. The CLI supports `--split development` so tuning never touches held-out data.
+**Decision.** `backend/app/evaluation.py` runs every case and approach in a thread pool.
+- **Isolation:** any exception while answering or grading a case becomes a recorded `internal_error` response, and the run continues. If something outside a single case fails, such as the database, the run is marked `failed` rather than left as `running`.
+- **Self-contained runs:** every run stores the corpus hash, dataset hash, prompt versions and model configuration. It also stores a full snapshot with the launch criteria, their hash, and the dataset cases it was graded against. Reopening a run, or deciding on it later, uses that snapshot, not whatever the files say today.
+- **Held-out discipline:** the CLI supports `--split development`, so tuning never touches held-out data. The Decision view and reports skip development-only runs when picking the latest result.
 
-**Why.** The spec's requirements are specific: per-case isolation, immutable runs, version stamps, a held-out discipline, SQLite storage, human review and a custom decision view. Existing tools cover pieces of this. None cover the role-based disclosure metric or the decision logic, and most need a hosted account or their own storage.
+**Why.** The requirements are specific (R6 to R9): per-case isolation, immutable runs, version stamps, a held-out discipline, SQLite storage, human review and a custom decision view. Existing tools cover pieces of this. None cover the role-based disclosure metric or the decision logic, and most need a hosted account or their own storage.
 
 **Alternatives considered.**
 
@@ -342,6 +348,8 @@ When a restricted question is asked, the assistant says it couldn't find the ans
 
 **Why.** With 6 unanswerable held-out cases, one case moves the rate by 17 points, so the uncertainty has to be visible. The Wilson interval behaves sensibly at 0% and 100% and with small samples, where the textbook normal approximation breaks down (for example, it gives a zero-width interval at 6 out of 6).
 
+**Measurement coverage.** Latency and cost are judged on the cases that were measured, but only when at least 90% of cases have a measurement (`min_measurement_coverage`). The alternatives were worse. Requiring 100% would let one timeout with no token usage block the cost verdict. Averaging the missing cases in as $0 would break R7.
+
 **Alternatives considered.** The normal approximation: wrong at small n. Clopper-Pearson intervals: valid but overly conservative. Bootstrap intervals: more general but not deterministic unless seeded, and more than a single proportion needs. Interpolated percentiles (numpy's default): fine, but they can report a latency that never occurred. SciPy or statsmodels: not needed for two short formulas.
 
 **Revisit when** comparing two approaches directly. A paired test such as McNemar's on the same cases would answer whether the difference between them is real.
@@ -353,7 +361,7 @@ When a restricted question is asked, the assistant says it couldn't find the ans
 - **Snapshots and hashes:** every run stores a snapshot of all of this, and the decision page shows a hash of the criteria file.
 - **Environment:** runtime settings and the API key come from environment variables or a git-ignored `.env`, read by a 15-line loader in `settings.py`. The browser only receives the key's variable name and whether it is set.
 
-**Why.** Prompts and thresholds are the experiment's independent variables, so they belong in version control, where changes show up in diffs. The criteria hash makes it visible if thresholds change after results are seen, which the spec forbids.
+**Why.** Prompts and thresholds are the experiment's independent variables, so they belong in version control, where changes show up in diffs. Each run stores the criteria and their hash, so a threshold edited after results are seen cannot change an existing verdict, and the Decision view flags that the current file differs (R9).
 
 **Alternatives considered.**
 
@@ -369,10 +377,16 @@ When a restricted question is asked, the assistant says it couldn't find the ans
 
 ## 18. Frontend libraries: React only
 
-**Decision.** React 19 and TypeScript, built with Vite 8. There are no other runtime dependencies. Routing is about 30 lines of hash-based code (`router.ts`). Data fetching is a typed wrapper around `fetch` (`api.ts`). State is `useState` plus one React context for the source drawer.
+**Decision.** React 19 and TypeScript 6 (strict), built with Vite 8. There are no other runtime dependencies.
+- **Routing:** about 30 lines of hash-based code (`router.ts`).
+- **Data fetching:** a typed wrapper around `fetch` (`api.ts`) plus one small hook, `useAsync`, which exposes loading and error state and ignores a response if a newer request has started. Switching runs or filters quickly can therefore never show data for the wrong selection.
+- **State:** `useState` plus two React contexts, one for the server configuration and one for the source drawer.
+- **Deep links:** every Inspect filter and selection is in the URL, and all links preserve it.
+
+TypeScript is pinned to 6.0, not the newer 7.x, because typescript-eslint doesn't support 7.x yet. Linting was judged more valuable than the newest compiler.
 
 **Why.**
-- The spec requires React, TypeScript and Vite.
+- React, TypeScript and Vite are required (R1).
 - The app has four views with little shared state. Hash routing means deep links such as `#/inspect?run=…&case=U02&focus=basic_rag` work without any server rewrite rules, which is how the Decision view links failing criteria to example cases.
 - With no extra libraries, the app is about 80 KB gzipped, and there is less to learn or update.
 
@@ -381,10 +395,10 @@ When a restricted question is asked, the assistant says it couldn't find the ans
 | Option | Why not |
 |---|---|
 | React Router or TanStack Router | Both are the standard choices for larger apps. With four flat routes, our own 30 lines are enough. |
-| TanStack Query or SWR | Caching and automatic refetching help when many views share server data. Here each view fetches on mount, and after a review is saved we reload once. |
+| TanStack Query or SWR | Caching, deduplication and automatic refetching help when many views share server data. Here the need is narrower: loading, error and stale-response handling, which `useAsync` covers in about 40 lines. TanStack Query is the first thing to add if views start sharing cached data. |
 | Redux, Zustand or Jotai | No complex shared state to manage. |
-| A component library (MUI, Chakra, Mantine, Ant Design) | Speeds up building, but makes the app look like the library's template. The spec asks for a restrained look like a small internal product. Tables, badges and a drawer are simple to write. |
-| Headless components (Radix, shadcn/ui) | Radix would be the first addition if the UI grows. Its accessible dialogs and menus would be worth having. The drawer here handles Escape and has dialog semantics, but lacks focus trapping. |
+| A component library (MUI, Chakra, Mantine, Ant Design) | Speeds up building, but makes the app look like the library's template. The goal is a restrained look, like a small internal product. Tables, badges and a drawer are simple to write. |
+| Headless components (Radix, shadcn/ui) | Radix would be the first addition if the UI grows. Its accessible dialogs and menus would be worth having. The drawer here is a modal dialog: it moves focus in, traps Tab, closes on Escape, and returns focus to the citation. |
 
 **Revisit when** the UI grows beyond about six views or needs complex forms. Add a router and Radix primitives first.
 
@@ -395,7 +409,7 @@ When a restricted question is asked, the assistant says it couldn't find the ans
 - **Colours:** the three series use the first three slots of a palette checked for colour-blind separation, and each point also has a text label, so identity never depends on colour alone.
 - **Missing cost:** an approach whose cost is unknown is not plotted. The legend says why ("cost unavailable for 45 of 45 cases").
 
-**Why.** A chart library tends to plot a missing value as 0, which the spec explicitly forbids for cost. Three points don't justify a 100 KB dependency. Writing the SVG directly also gives full control over the threshold lines and the "not plotted" explanation.
+**Why.** A chart library tends to plot a missing value as 0, which R7 forbids for cost. Three points don't justify a 100 KB dependency. Writing the SVG directly also gives full control over the threshold lines and the "not plotted" explanation.
 
 **Alternatives considered.** Recharts, Nivo, Victory, Chart.js, ECharts and Plotly are all fine for dashboards with many chart types. D3 is the most flexible but is itself low-level for three points. Vega-Lite is a good choice for exploratory charts in a report.
 
@@ -414,11 +428,12 @@ When a restricted question is asked, the assistant says it couldn't find the ans
 ## 21. Testing: pytest, Vitest, Testing Library, and a local fake of the provider API
 
 **Decision.**
-- **Backend:** pytest with FastAPI's `TestClient` (56 tests). Each API test gets its own temporary SQLite file. Approach tests use `ScriptedProvider`, a test double whose output we choose, to create exact failures: fabricated citations, superseded citations, timeouts, unparseable output.
+- **Backend:** pytest with FastAPI's `TestClient`. Each API test gets its own temporary SQLite file. Approach tests use `ScriptedProvider`, a test double whose output we choose, to create exact failures: fabricated citations, superseded citations, timeouts, unparseable output.
 - **Provider adapter:** tested against a small local HTTP server that mimics the Messages endpoint. This covers usage parsing, the effort setting, and timeout mapping without a network or key.
-- **Frontend:** Vitest with jsdom and Testing Library (11 tests), plus a TypeScript typecheck.
+- **Frontend:** Vitest with jsdom and Testing Library, covering components and all four views against a mocked `fetch`: error states, deep links, demo labelling, and chart rules.
+- **Python versions:** CI runs the backend suite on Python 3.10 (the documented minimum) and 3.12.
 
-**Why.** Each spec acceptance criterion maps to at least one named test. A test double makes failure paths deterministic, which a real model can't be relied on to produce. The fake server tests the real SDK code, not a mock of it. Vitest shares Vite's configuration, so there is no separate Babel or Jest setup.
+**Why.** Each acceptance criterion maps to at least one named test, and every defect found in the [engineering review](engineering_review.md) has a regression test. A test double makes failure paths deterministic, which a real model can't be relied on to produce. The fake server tests the real SDK code, not a mock of it. Vitest shares Vite's configuration, so there is no separate Babel or Jest setup.
 
 **Alternatives considered.**
 
@@ -434,7 +449,7 @@ When a restricted question is asked, the assistant says it couldn't find the ans
 
 ## 22. Developer workflow: Makefile and virtualenv, no Docker; GitHub Actions for CI
 
-**Decision.** A `Makefile` with `setup`, `demo`, `api`, `web`, `eval`, `eval-dev`, `reports`, `fixtures` and `test`. A standard `.venv` for Python and `npm ci` for Node. GitHub Actions runs backend and frontend tests on each push.
+**Decision.** A `Makefile` with `setup`, `demo`, `api`, `web`, `eval`, `eval-dev`, `reports`, `fixtures`, `lint`, `test` and `check`. A standard `.venv` for Python and `npm ci` for Node. GitHub Actions runs everything in `make check` on each push, plus a production build.
 
 **Why.** Make is available on macOS and Linux, and the targets double as documentation of the workflow. A virtualenv plus npm is what most reviewers already have.
 
@@ -461,6 +476,19 @@ When a restricted question is asked, the assistant says it couldn't find the ans
 **Alternatives considered.** Manual screenshots: not repeatable. Storybook visual tests: useful for component libraries, heavy for four views. Adding Playwright as a dev dependency: the right move once there is an end-to-end suite (decision 21).
 
 **Revisit when** Playwright end-to-end tests are added. Screenshot capture then becomes a script in the same suite.
+
+## 24. Code-quality tooling: ruff, ESLint, strict TypeScript, and CI that runs them
+
+**Decision.**
+- **Python:** `ruff` for linting (pyflakes, pycodestyle, isort, bugbear, pyupgrade, simplify, ruff-specific rules) and formatting. Configuration is in `backend/pyproject.toml`.
+- **TypeScript:** ESLint with `typescript-eslint` and the React hooks rules, and TypeScript in strict mode.
+- **Enforcement:** `make lint` runs all of it and CI fails on any finding. The code has no lint suppressions.
+
+**Why.** Style debates are settled by the formatter, and whole classes of bugs are caught before review: unused imports and variables, likely bugs flagged by bugbear, and missing effect dependencies. The hooks rules found stale-closure bugs in the first version of the Inspect and Compare views.
+
+**Alternatives considered.** Black plus isort plus flake8: equivalent but three tools instead of one. mypy or pyright in CI: valuable. The backend has type hints on public functions, but a strict type-check pass is the next quality step. Prettier: the ESLint rules plus consistent hand formatting were enough at this size. Pre-commit hooks: a good addition for contributors; CI already enforces the same checks.
+
+**Revisit when** more contributors join. Add pre-commit and a strict pyright run.
 
 ---
 

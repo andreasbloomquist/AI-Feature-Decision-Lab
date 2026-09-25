@@ -1,5 +1,6 @@
 """Optional model judge for semantic correctness. Verdicts are stored with their rationale and
 always labeled as model-judged."""
+
 from __future__ import annotations
 
 import re
@@ -10,6 +11,9 @@ from .pricing import estimate_cost_usd
 from .prompts import load_prompt
 from .schemas import ApproachResponse
 
+JUDGE_PROMPT = "prompts/judge.v1.md"
+JUDGE_MAX_TOKENS = 1500  # verdict + short rationale, with room for the model's reasoning
+
 JUDGE_RE = re.compile(
     r"VERDICT:\s*(correct|partially_correct|incorrect)\s*\n+\s*CITATIONS_SUPPORT:\s*(yes|no|n/a)\s*\n+\s*RATIONALE:\s*(.*)",
     re.IGNORECASE | re.DOTALL,
@@ -17,7 +21,7 @@ JUDGE_RE = re.compile(
 
 
 def judge_response(llm: LLMProvider, case: dict, resp: ApproachResponse, corpus: Corpus) -> dict:
-    prompt = load_prompt("prompts/judge.v1.md")
+    prompt = load_prompt(JUDGE_PROMPT)
     cited = []
     for c in resp.citations:
         p = corpus.passage(c.passage_id) if c.passage_id and c.valid else None
@@ -32,7 +36,7 @@ def judge_response(llm: LLMProvider, case: dict, resp: ApproachResponse, corpus:
     )
     base = {"judge_version": prompt.version, "model": llm.model, "label": "model-judged"}
     try:
-        result = llm.generate(system, user, max_tokens=1500)
+        result = llm.generate(system, user, max_tokens=JUDGE_MAX_TOKENS)
     except LLMError as e:
         return {**base, "verdict": None, "error": f"{e.kind}: {e.message}"}
     m = JUDGE_RE.search(result.text or "")

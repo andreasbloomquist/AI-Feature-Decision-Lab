@@ -30,9 +30,26 @@ Does guarded RAG improve successful policy resolution enough to justify its extr
 
 All three receive the same question and role and return the same response object.
 
+## Requirements
+
+These are the fixed requirements the build had to meet. The [technical decisions](decisions.md) refer back to them.
+
+| # | Requirement |
+|---|---|
+| R1 | Stack: React + TypeScript + Vite frontend, Python + FastAPI backend, SQLite storage, Markdown policies with structured metadata, BM25 (or equivalent) keyword retrieval, one real LLM provider through its official SDK, with provider and model set by environment variables. |
+| R2 | Compare search, basic RAG and guarded RAG on the same documents and questions, with one common response object: `answer, status, citations, retrieved_document_ids, latency_ms, input_tokens, output_tokens, estimated_cost_usd, error`. |
+| R3 | Enforce document access **before retrieval**, and apply it to search results, model context, citations and source previews. |
+| R4 | Guarded RAG validates citations after generation and never makes a second, unrestricted call to "fix" an answer. Invalid citations are never shown as trusted sources. |
+| R5 | Run without an API key in a clearly labelled fixture mode whose results are never presented as measurements. Show "No live evaluation yet" instead of invented scores. |
+| R6 | Evaluate on a fixed 60-question set (15 development, 45 held-out). Do not tune against the held-out set. Show sample counts beside every percentage. |
+| R7 | Never infer zero cost from missing token usage. Never compare fixture latency or cost with live measurements. |
+| R8 | A failed case must not stop a run. Every run is a new record that stores its prompt, corpus, dataset and model versions and a timestamp. |
+| R9 | Apply launch criteria fixed in advance, and allow the answer to be "do not launch yet". |
+| R10 | No API keys in source control, logs, saved runs, screenshots or browser responses. |
+
 ## Success measure
 
-The launch decision uses pre-registered criteria on the 45-case held-out set (`config/launch_criteria.yaml`):
+The launch decision uses criteria written before any live evaluation was run, applied to the 45-case held-out set (`config/launch_criteria.yaml`). Each run stores a copy of the criteria and its hash, so editing the file afterwards cannot change an existing verdict:
 
 | Criterion | Threshold | Why |
 |---|---|---|
@@ -44,6 +61,8 @@ The launch decision uses pre-registered criteria on the 45-case held-out set (`c
 | Average model cost per question | ≤ $0.02 | At an estimated 2,000 questions a month, about $40 a month; trivial next to HR time. |
 
 The headline measure for "more useful than search" is the correctness lift over search on the same held-out cases, reported with counts.
+
+Latency and cost are judged on the cases that were actually measured, provided at least 90% of cases were. A timeout with no token usage lowers that coverage instead of counting as free, and one transient error cannot block the verdict on its own.
 
 ## Scope
 

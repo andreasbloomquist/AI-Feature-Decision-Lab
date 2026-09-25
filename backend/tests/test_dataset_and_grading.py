@@ -1,7 +1,9 @@
 from collections import Counter
 
-from app.dataset import load_dataset
-from app.grading import check_facts, find_disclosures, grade, phrase_present, normalize
+import pytest
+
+from app.dataset import load_dataset, validate_cases
+from app.grading import check_facts, find_disclosures, grade, normalize, phrase_present
 from app.schemas import ApproachResponse, Citation
 
 
@@ -9,7 +11,12 @@ def test_dataset_composition():
     cases = load_dataset()["cases"]
     assert len(cases) == 60
     assert Counter(c["category"] for c in cases) == {
-        "single_document": 24, "multi_document": 12, "outdated_policy": 8, "unanswerable": 8, "role_access": 8}
+        "single_document": 24,
+        "multi_document": 12,
+        "outdated_policy": 8,
+        "unanswerable": 8,
+        "role_access": 8,
+    }
     assert Counter(c["split"] for c in cases) == {"development": 15, "held_out": 45}
     assert len({c["case_id"] for c in cases}) == 60
 
@@ -65,10 +72,38 @@ def test_disclosure_detection(corpus):
 
 def test_grade_outcomes(corpus):
     ds = load_dataset()["by_id"]
-    ok = _resp("Your department head (VP) and your manager approve it [NS-TRV-2026#3].",
-               [Citation("NS-TRV-2026", "NS-TRV-2026#3", "Travel Policy (2026)", True)], ["NS-TRV-2026"])
+    ok = _resp(
+        "Your department head (VP) and your manager approve it [NS-TRV-2026#3].",
+        [Citation("NS-TRV-2026", "NS-TRV-2026#3", "Travel Policy (2026)", True)],
+        ["NS-TRV-2026"],
+    )
     g = grade(ds["S02"], ok, corpus)
     assert g["outcome"] == "correct" and g["citation_check"]["structurally_valid"]
     invented = _resp("Yes, 3% match [NS-CARD-001#1].", [Citation("NS-CARD-001", "NS-CARD-001#1", "x", True)])
     g = grade(ds["U01"], invented, corpus)
     assert g["outcome"] == "invented_answer" and not g["citation_check"]["supports_deterministic"]
+
+
+def test_disclosure_detection_is_case_insensitive_and_covers_warnings(corpus):
+    case = load_dataset()["by_id"]["R01"]
+    lower = _resp("Look at ns-hr-001 for bands.")
+    assert any(d["type"] == "document_id" for d in find_disclosures(case, lower, corpus))
+    warned = _resp("See policy.")
+    warned.warnings.append("invalid citations: NS-HR-001 (unauthorized)")
+    assert any(d["type"] == "document_id" for d in find_disclosures(case, warned, corpus))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("user_role", "ceo"), ("split", "test"), ("answerability", "maybe"), ("category", "other")],
+)
+def test_dataset_validation_rejects_unknown_values(field, value):
+    case = dict(load_dataset()["cases"][0], **{field: value})
+    with pytest.raises(ValueError, match=field):
+        validate_cases([case])
+
+
+def test_dataset_validation_rejects_duplicate_ids():
+    case = load_dataset()["cases"][0]
+    with pytest.raises(ValueError, match="duplicate"):
+        validate_cases([case, dict(case)])

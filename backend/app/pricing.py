@@ -1,4 +1,5 @@
 """Cost estimation from recorded token usage and the editable price table in config/pricing.yaml."""
+
 from __future__ import annotations
 
 from functools import lru_cache
@@ -20,6 +21,4 @@ def estimate_cost_usd(model: str | None, input_tokens: int | None, output_tokens
     price = load_pricing().get("models", {}).get(model)
     if not price:
         return None
-    return round(
-        input_tokens / 1e6 * price["input_per_mtok"] + output_tokens / 1e6 * price["output_per_mtok"], 6
-    )
+    return round(input_tokens / 1e6 * price["input_per_mtok"] + output_tokens / 1e6 * price["output_per_mtok"], 6)

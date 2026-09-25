@@ -1,11 +1,14 @@
 """The common response object returned by every approach."""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from typing import Literal
 
+# "access_denied" is returned by the source preview when a role may not open a document. The
+# approaches themselves report a restricted question as "abstained", so they never confirm that
+# a restricted document exists.
 Status = Literal["answered", "abstained", "access_denied", "error"]
-STATUSES = ("answered", "abstained", "access_denied", "error")
 
 
 @dataclass
@@ -43,13 +46,31 @@ class ApproachResponse:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, d: dict) -> "ApproachResponse":
-        d = dict(d)
-        d["citations"] = [Citation(**c) for c in d.get("citations", [])]
-        return cls(**d)
+    def failed(cls, approach: str, error: str, *, approach_version: str = "") -> ApproachResponse:
+        """A response for a case that could not be run at all (exception before any output)."""
+        return cls(
+            approach=approach,
+            answer="",
+            status="error",
+            citations=[],
+            retrieved_document_ids=[],
+            latency_ms=None,
+            input_tokens=None,
+            output_tokens=None,
+            estimated_cost_usd=None,
+            error=error,
+            approach_version=approach_version,
+        )
 
     def public_dict(self) -> dict:
-        """What an end user's browser receives: no raw model output."""
+        """What an end user's browser receives.
+
+        No raw model output, and a citation to a restricted document is indistinguishable from a
+        citation to one that does not exist, so users cannot probe for restricted IDs.
+        """
         d = self.to_dict()
         d.pop("raw_output", None)
+        for c in d["citations"]:
+            if c["reason"] in ("unauthorized", "unknown_document"):
+                c["reason"] = "unavailable"
         return d

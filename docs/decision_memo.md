@@ -8,7 +8,7 @@ There are no measured model results, so this memo makes **no launch recommendati
 
 ## 1. Template
 
-- **Proposed action:** one of *proceed to a limited pilot*, *do not launch yet*, *do not launch*, or *insufficient evidence*, as computed from the pre-registered criteria.
+- **Proposed action:** one of *proceed to a limited pilot*, *do not launch yet*, *do not launch*, or *insufficient evidence*, as computed from the launch criteria stored with the run.
 - **Evidence:** held-out criteria table with counts and intervals; lift over search; latency and cost.
 - **Major failure modes:** held-out failures for guarded RAG grouped by type, with case IDs.
 - **Limits of the experiment:** dataset size, synthetic questions, judge reliability, single-machine latency.
@@ -30,8 +30,8 @@ These results come from saved example responses written to exercise the interfac
 | Correct answers on answerable cases | >= 80.0% | 91.4% (32/35) | Pass (interval crosses threshold) |
 | Valid citations among answered cases | >= 95.0% | 100.0% (32/32) | Pass (interval crosses threshold) |
 | Correct abstention on unanswerable cases | >= 90.0% | 100.0% (6/6) | Pass (interval crosses threshold) |
-| 95th-percentile latency | <= 6.00 s | not measured | Insufficient evidence — latency not measured for 45 of 45 cases (fixture responses) |
-| Average model cost per question | <= $0.0200 | not measured | Insufficient evidence — token usage unavailable for 45 of 45 cases |
+| 95th-percentile latency | <= 6.00 s | not measured | Insufficient evidence — not measured: fixture responses have no latency or token usage |
+| Average model cost per question | <= $0.0200 | not measured | Insufficient evidence — not measured: fixture responses have no latency or token usage |
 
 All approaches on the same criteria:
 
@@ -44,19 +44,19 @@ All approaches on the same criteria:
 | 95th-percentile latency | Pass | Insufficient | Insufficient |
 | Average model cost per question | Pass | Insufficient | Insufficient |
 
-### Major failure modes (guarded RAG, held-out)
+### Major failure modes (Guarded RAG, held-out)
 
 - **Error (timeout, validation or provider)**: 2 case(s), e.g. M10, S19
 - **Abstained when the policy did answer**: 1 case(s), e.g. M04
 
 ### Limits of this experiment
 
-- 60 synthetic questions (45 held out) on a 21-document synthetic corpus. Enough to demonstrate a decision process, not to establish production reliability.
-- Small denominators: 6 unanswerable and about 35 answerable held-out cases, so one case moves a rate by 3 to 17 points. Confidence intervals are shown for that reason.
+- 60 synthetic questions (45 in the held-out set) on a 21-document synthetic corpus. Enough to demonstrate a decision process, not to establish production reliability.
+- Small denominators: 35 answerable, 6 unanswerable and 4 access-denied cases, so one case moves a rate by 3 to 25 points. Confidence intervals are shown for that reason.
 - Questions were written by the same author as the documents, so they are cleaner and closer to the document wording than real employee questions.
 - Deterministic fact matching is strict about figures and lenient about wording; the model judge is itself a model and can be wrong. Human review is the tie-breaker.
 - Latency was measured from one machine and region at low concurrency; production latency and cost at peak volume are untested.
-- Roles are selected in the UI, not authenticated. Access control is tested at the retrieval layer only.
+- Roles are selected in the UI, not authenticated. Access control is enforced and tested in the backend (retrieval, model context, citations, previews), not against a real identity provider.
 
 ### What we would test before a real rollout
 

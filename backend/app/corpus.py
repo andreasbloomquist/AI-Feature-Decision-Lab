@@ -1,4 +1,5 @@
 """Load the Markdown policy corpus and split it into citable passages."""
+
 from __future__ import annotations
 
 import hashlib
@@ -67,7 +68,7 @@ class Corpus:
         return self.passages.get(passage_id)
 
 
-def _split_passages(document_id: str, title: str, body: str) -> list[Passage]:
+def _split_passages(document_id: str, body: str) -> list[Passage]:
     """One passage per '## ' section. Text before the first section becomes an overview passage."""
     sections: list[tuple[str, list[str]]] = [("Overview", [])]
     for line in body.splitlines():
@@ -116,7 +117,7 @@ def parse_document(raw: str) -> Document:
         supersedes=meta.get("supersedes"),
         body=body.strip(),
     )
-    doc.passages = _split_passages(doc.document_id, doc.title, doc.body)
+    doc.passages = _split_passages(doc.document_id, doc.body)
     return doc
 
 

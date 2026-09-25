@@ -3,6 +3,7 @@
 Secrets are read here and nowhere else. `public_settings()` is the only view that leaves
 the process (API responses, saved runs), and it never includes key material.
 """
+
 from __future__ import annotations
 
 import os

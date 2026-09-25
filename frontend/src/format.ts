@@ -7,6 +7,22 @@ export const APPROACH_LABELS: Record<ApproachId, string> = {
 };
 export const APPROACHES: ApproachId[] = ["search", "basic_rag", "guarded_rag"];
 
+export function isApproachId(value: string | null | undefined): value is ApproachId {
+  return APPROACHES.includes(value as ApproachId);
+}
+
+export const LABEL_COPY: Record<string, string> = {
+  correct: "Correct",
+  partially_correct: "Partially correct",
+  incorrect: "Incorrect",
+};
+
+/** CSS tone for a graded row: the backend decides success; "partial" is shown as amber. */
+export function outcomeTone(succeeded: boolean, outcome: string): "good" | "mid" | "bad" {
+  if (succeeded) return "good";
+  return outcome === "partial" ? "mid" : "bad";
+}
+
 export const CATEGORY_LABELS: Record<string, string> = {
   single_document: "Single document",
   multi_document: "Multiple documents",
@@ -114,4 +130,5 @@ export const REASON_COPY: Record<string, string> = {
   unauthorized: "cites a document your role can't view",
   superseded: "cites a superseded policy",
   not_in_context: "cites a passage the assistant was not given",
+  unavailable: "cites a document that does not exist or that your role can't view",
 };

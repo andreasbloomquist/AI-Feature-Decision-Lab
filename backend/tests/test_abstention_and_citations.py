@@ -1,4 +1,5 @@
 """Acceptance 3 and 4: abstention on unanswerable questions; fabricated citations are rejected."""
+
 from app.approaches.base import ABSTAIN_MESSAGE
 from app.citations import parse_citation_markers, validate_citation
 from app.llm import ScriptedProvider
@@ -59,7 +60,9 @@ def test_fabricated_citation_never_marked_valid_in_basic_rag(make_approaches):
 
 def test_valid_guarded_answer(make_approaches):
     llm = ScriptedProvider(
-        lambda s, u: "STATUS: ANSWERED\nANSWER: Trips over $2,000 need your department head (VP) and your manager to approve [NS-TRV-2026#3]."
+        lambda s, u: (
+            "STATUS: ANSWERED\nANSWER: Trips over $2,000 need your department head (VP) and your manager to approve [NS-TRV-2026#3]."
+        )
     )
     resp = make_approaches(llm)["guarded_rag"].run("Who approves travel over $2,000?", "employee")
     assert resp.status == "answered"
@@ -69,15 +72,28 @@ def test_valid_guarded_answer(make_approaches):
 
 def test_unparseable_guarded_output_is_error(make_approaches):
     resp = make_approaches(ScriptedProvider(lambda s, u: "Sure! Your VP."))["guarded_rag"].run(
-        "Who approves travel over $2,000?", "employee")
+        "Who approves travel over $2,000?", "employee"
+    )
     assert resp.status == "error" and resp.error.startswith("unparseable_output")
 
 
 def test_marker_parsing():
     assert parse_citation_markers("a [NS-TRV-2026#3] b [NS-EXP-001, NS-ENT-001#2] [note]") == [
-        ("NS-TRV-2026", "NS-TRV-2026#3"), ("NS-EXP-001", None), ("NS-ENT-001", "NS-ENT-001#2")]
+        ("NS-TRV-2026", "NS-TRV-2026#3"),
+        ("NS-EXP-001", None),
+        ("NS-ENT-001", "NS-ENT-001#2"),
+    ]
 
 
 def test_document_level_citation_maps_to_context_passage(corpus):
     c = validate_citation(corpus, "employee", "NS-TRV-2026", None, {"NS-TRV-2026#3", "NS-TRV-2026#5"})
     assert c.valid and c.passage_id == "NS-TRV-2026#3"
+
+
+def test_document_level_citation_uses_numeric_passage_order(corpus):
+    c = validate_citation(corpus, "employee", "NS-TRV-2026", None, {"NS-TRV-2026#10", "NS-TRV-2026#2"})
+    assert c.passage_id == "NS-TRV-2026#2"
+
+
+def test_markers_are_case_insensitive():
+    assert parse_citation_markers("see [ns-trv-2026#3]") == [("NS-TRV-2026", "NS-TRV-2026#3")]

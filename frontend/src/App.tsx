@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { api } from "./api";
+import { ErrorNotice } from "./components/Notice";
 import { SourcePanel } from "./components/SourcePanel";
-import { href, navigate, useRoute } from "./router";
+import { ConfigContext } from "./configContext";
+import { href, useRoute } from "./router";
 import { SourceContext, type SourceTarget } from "./sourceContext";
-import type { Health, Role } from "./types";
+import { useAsync } from "./useAsync";
 import { AskView } from "./views/AskView";
 import { CompareView } from "./views/CompareView";
 import { DecisionView } from "./views/DecisionView";
@@ -18,59 +20,73 @@ const TABS = [
 
 export default function App() {
   const route = useRoute();
-  const [health, setHealth] = useState<Health | null>(null);
-  const [roles, setRoles] = useState<Role[]>([]);
+  const config = useAsync("config", api.config);
   const [source, setSource] = useState<SourceTarget | null>(null);
-  const [offline, setOffline] = useState(false);
-
-  useEffect(() => {
-    api.health().then(setHealth).catch(() => setOffline(true));
-    api.config().then((c) => setRoles(c.roles)).catch(() => setOffline(true));
-  }, []);
-
   const openSource = useCallback((t: SourceTarget) => setSource(t), []);
+  const closeSource = useCallback(() => setSource(null), []);
   const runParam = route.params.get("run");
+  const settings = config.data?.settings;
 
   return (
-    <SourceContext.Provider value={openSource}>
-      <div className="app">
-        <header className="topbar">
-          <div className="brand">
-            <span className="brand-mark" aria-hidden="true">N</span>
-            <div>
-              <div className="brand-name">Policy Assistant Decision Lab</div>
-              <div className="brand-sub">Northstar · Should we launch an AI policy assistant?</div>
+    <ConfigContext.Provider value={config.data}>
+      <SourceContext.Provider value={openSource}>
+        <div className="app">
+          <header className="topbar">
+            <div className="brand">
+              <span className="brand-mark" aria-hidden="true">
+                N
+              </span>
+              <div>
+                <div className="brand-name">Policy Assistant Decision Lab</div>
+                <div className="brand-sub">Northstar · Should we launch an AI policy assistant?</div>
+              </div>
             </div>
-          </div>
-          <nav className="tabs-nav" aria-label="Views">
-            {TABS.map((t) => (
-              <a key={t.id} href={href(t.id, runParam && t.id !== "ask" ? { run: runParam } : {})} className={route.view === t.id ? "active" : ""}>
-                {t.label}
-              </a>
-            ))}
-          </nav>
-          <div className="mode">
-            {health &&
-              (health.mode === "fixture" ? (
-                <span className="mode-pill mode-fixture" title="No API key configured. AI answers come from saved examples.">
-                  Fixture mode · demo data
-                </span>
-              ) : (
-                <span className="mode-pill mode-live" title={`Provider: ${health.provider}`}>
-                  Live · {health.model}
-                </span>
+            <nav className="tabs-nav" aria-label="Views">
+              {TABS.map((t) => (
+                <a
+                  key={t.id}
+                  href={href(t.id, runParam && t.id !== "ask" ? { run: runParam } : {})}
+                  className={route.view === t.id ? "active" : ""}
+                  aria-current={route.view === t.id ? "page" : undefined}
+                >
+                  {t.label}
+                </a>
               ))}
-          </div>
-        </header>
-        {offline && <div className="notice notice-bad banner">Cannot reach the API. Start the backend: <span className="mono">make api</span></div>}
-        <main>
-          {route.view === "ask" && <AskView health={health} roles={roles} />}
-          {route.view === "compare" && <CompareView runId={runParam} onRun={(id) => navigate("compare", { run: id })} />}
-          {route.view === "inspect" && <InspectView route={route} />}
-          {route.view === "decision" && <DecisionView runId={runParam} onRun={(id) => navigate("decision", { run: id ?? undefined })} />}
-        </main>
-        {source && <SourcePanel target={source} onClose={() => setSource(null)} />}
-      </div>
-    </SourceContext.Provider>
+            </nav>
+            <div className="mode">
+              {settings &&
+                (settings.mode === "fixture" ? (
+                  <span className="mode-pill mode-fixture" title="No API key configured. AI answers come from saved examples.">
+                    Fixture mode · demo data
+                  </span>
+                ) : (
+                  <span className="mode-pill mode-live" title={`Provider: ${settings.provider}`}>
+                    Live · {settings.model}
+                  </span>
+                ))}
+            </div>
+          </header>
+          {config.error && (
+            <div className="banner">
+              <ErrorNotice error={config.error} onRetry={config.reload} />
+            </div>
+          )}
+          <main>
+            {route.view === "ask" && (
+              // Keyed so a deep link to a different question resets the form.
+              <AskView
+                key={`${route.params.get("q")}:${route.params.get("role")}`}
+                initialQuestion={route.params.get("q")}
+                initialRole={route.params.get("role")}
+              />
+            )}
+            {route.view === "compare" && <CompareView runParam={runParam} splitParam={route.params.get("split")} />}
+            {route.view === "inspect" && <InspectView route={route} />}
+            {route.view === "decision" && <DecisionView runParam={runParam} />}
+          </main>
+          {source && <SourcePanel target={source} onClose={closeSource} />}
+        </div>
+      </SourceContext.Provider>
+    </ConfigContext.Provider>
   );
 }

@@ -6,17 +6,20 @@
 
 ## Read this first: dataset size and limits
 
-- **60 synthetic questions** (15 development, 45 held out) over a **21-document synthetic corpus**. That is enough to demonstrate a decision process. It is not enough to establish production reliability.
-- Held-out denominators are small: 35 answerable, 6 unanswerable and 4 access-denied cases. One case moves a rate by 3 to 25 points, so every rate is reported with its count and a 95% Wilson interval.
-- Questions were written by the same author as the policies, so they are cleaner than real employee questions.
-- Latency comes from one machine at low concurrency. Cost is estimated from recorded tokens and the editable price table in `config/pricing.yaml`; missing usage is reported as unavailable, never as zero.
+- 60 synthetic questions (45 in the held-out set) on a 21-document synthetic corpus. Enough to demonstrate a decision process, not to establish production reliability.
+- Small denominators: 35 answerable, 6 unanswerable and 4 access-denied cases, so one case moves a rate by 3 to 25 points. Confidence intervals are shown for that reason.
+- Questions were written by the same author as the documents, so they are cleaner and closer to the document wording than real employee questions.
+- Deterministic fact matching is strict about figures and lenient about wording; the model judge is itself a model and can be wrong. Human review is the tie-breaker.
+- Latency was measured from one machine and region at low concurrency; production latency and cost at peak volume are untested.
+- Roles are selected in the UI, not authenticated. Access control is enforced and tested in the backend (retrieval, model context, citations, previews), not against a real identity provider.
+- Cost is estimated from recorded tokens and the editable price table in `config/pricing.yaml`; missing usage is reported as unavailable, never as zero.
 
 ## Run configuration
 
 | Field | Value |
 |---|---|
-| Run | `fixture-20260925T174712Z-15cc` (fixture) |
-| Created | 2026-09-25T17:47:12Z |
+| Run | `fixture-20260925T211726Z-6e87` (fixture) |
+| Created | 2026-09-25T21:17:26Z |
 | Corpus | `corpus-123344c244d4` |
 | Dataset | `northstar-policy-qa@1.0.0+6e15a5334bd6` |
 | Prompts | search: `search-v1`, basic_rag: `basic-rag-v1`, guarded_rag: `guarded-rag-v1`, judge: `judge-v1` |
@@ -57,8 +60,8 @@
 | Abstention quality (unanswerable) | 50.0% (1/2; 95% CI 9.4%–90.5%) | 50.0% (1/2; 95% CI 9.4%–90.5%) | 100.0% (2/2; 95% CI 34.2%–100.0%) |
 | Access-denied handling | 100.0% (1/1; 95% CI 20.6%–100.0%) | 100.0% (1/1; 95% CI 20.6%–100.0%) | 100.0% (1/1; 95% CI 20.6%–100.0%) |
 | Restricted disclosures | 0 in 15 cases | 0 in 15 cases | 0 in 15 cases |
-| Latency p50 / p95 | <1 ms / 4 ms (n=15) | not measured (fixture) | not measured (fixture) |
-| Model cost | $0 per question; $0 total (n=15) | unavailable (15 of 15 without token usage) | unavailable (14 of 15 without token usage) |
+| Latency p50 / p95 | <1 ms / 3 ms (n=15) | not measured (fixture) | not measured (fixture) |
+| Model cost | $0 per question; $0 total (n=15) | unavailable (15 of 15 without token usage) | $0 per question; $0 total (n=1, 14 without usage) |
 | Errors | 0 of 15 | 0 of 15 | 0 of 15 |
 
 **By category** (correct answers for answerable cases; correct abstention or safe decline otherwise):

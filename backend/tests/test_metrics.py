@@ -1,19 +1,51 @@
 """Acceptance 6 and 7: correct denominators with sample counts; missing token usage => cost unavailable."""
-from app.decision import evaluate_criteria, criteria_config
+
+from app.decision import criteria_config, evaluate_criteria
+from app.grading import final_label
 from app.metrics import compute_metrics, percentile, wilson
 from app.pricing import estimate_cost_usd
 
 
-def row(answerability, status, det_label=None, cost=0.01, latency=1000.0, cite_ok=True, abst=None, disclosures=(),
-        fixture=False, in_tok=1000, out_tok=100, cid="X"):
+def row(
+    answerability,
+    status,
+    det_label=None,
+    cost=0.01,
+    latency=1000.0,
+    cite_ok=True,
+    abst=None,
+    disclosures=(),
+    fixture=False,
+    in_tok=1000,
+    out_tok=100,
+    cid="X",
+):
+    grade_row = {"answerability": answerability, "status": status, "deterministic_label": det_label}
     return {
+        "case_id": cid,
+        "final_label": final_label(grade_row, None, None)[0],
         "case": {"case_id": cid, "answerability": answerability},
-        "response": {"status": status, "estimated_cost_usd": cost, "latency_ms": latency, "fixture": fixture,
-                     "input_tokens": in_tok, "output_tokens": out_tok},
-        "grade": {"answerability": answerability, "status": status, "deterministic_label": det_label,
-                  "citation_check": {"structurally_valid": cite_ok, "supports_deterministic": cite_ok} if status == "answered" else None,
-                  "abstained_correctly": abst, "disclosures": list(disclosures), "outcome": ""},
-        "judge": None, "review": None,
+        "response": {
+            "status": status,
+            "estimated_cost_usd": cost,
+            "latency_ms": latency,
+            "fixture": fixture,
+            "input_tokens": in_tok,
+            "output_tokens": out_tok,
+        },
+        "grade": {
+            "answerability": answerability,
+            "status": status,
+            "deterministic_label": det_label,
+            "citation_check": {"structurally_valid": cite_ok, "supports_deterministic": cite_ok}
+            if status == "answered"
+            else None,
+            "abstained_correctly": abst,
+            "disclosures": list(disclosures),
+            "outcome": "",
+        },
+        "judge": None,
+        "review": None,
     }
 
 
@@ -65,22 +97,47 @@ def test_missing_token_usage_gives_unavailable_cost():
     assert estimate_cost_usd("model-not-in-price-table", 100, 100) is None
     assert estimate_cost_usd("claude-opus-5", 1_000_000, 0) == 5.0
     m = compute_metrics(sample_rows())
-    assert m["cost"]["available"] is False
-    assert m["cost"]["per_question_usd"] is None  # not averaged as if the missing case cost zero
+    assert m["cost"]["complete"] is False
     assert m["cost"]["n_missing"] == 1 and m["cost"]["n_with_usage"] == 6
+    # Averaged over the 6 known costs, not diluted by counting the missing case as $0.
+    assert m["cost"]["per_question_usd"] == 0.01
+    assert m["cost"]["coverage"] == round(6 / 7, 4)
+    nothing = compute_metrics([row("answerable", "error", "incorrect", cost=None, in_tok=None, out_tok=None)])
+    assert nothing["cost"]["per_question_usd"] is None and nothing["cost"]["total_usd"] is None
 
 
-def test_cost_criterion_insufficient_when_usage_missing():
+def test_cost_and_latency_need_minimum_measurement_coverage():
     cfg, _ = criteria_config()
-    rows = sample_rows() * 3
+    assert cfg["min_measurement_coverage"] == 0.9
+    rows = sample_rows() * 3  # 18 of 21 cases measured = 86% coverage
     crit = {c["id"]: c for c in evaluate_criteria(compute_metrics(rows), rows, cfg)}
-    assert crit["cost_per_question"]["state"] == "insufficient"
-    assert "unavailable" in crit["cost_per_question"]["reason"]
-    assert crit["latency_p95"]["state"] == "insufficient"
+    for cid in ("cost_per_question", "latency_p95"):
+        assert crit[cid]["state"] == "insufficient"
+        assert "18 of 21" in crit[cid]["reason"]
+
+
+def test_one_unmeasured_case_does_not_block_cost_and_latency():
+    cfg, _ = criteria_config()
+    rows = [row("answerable", "answered", "correct", cid=f"A{i}") for i in range(19)]
+    rows.append(row("answerable", "error", "incorrect", cost=None, latency=None, in_tok=None, out_tok=None, cid="T"))
+    crit = {c["id"]: c for c in evaluate_criteria(compute_metrics(rows), rows, cfg)}
+    assert crit["cost_per_question"]["state"] == "pass"
+    assert crit["cost_per_question"]["reason"] == "based on the 19 of 20 cases that were measured"
+    assert crit["latency_p95"]["state"] == "pass"
+
+
+def test_fixture_rows_make_cost_and_latency_insufficient():
+    cfg, _ = criteria_config()
+    rows = [row("answerable", "answered", "correct", fixture=True, cid=f"F{i}") for i in range(10)]
+    crit = {c["id"]: c for c in evaluate_criteria(compute_metrics(rows), rows, cfg)}
+    assert crit["latency_p95"]["state"] == crit["cost_per_question"]["state"] == "insufficient"
 
 
 def test_fixture_rows_never_report_latency():
-    rows = [row("answerable", "answered", "correct", fixture=True, latency=None), row("answerable", "abstained", "incorrect", latency=0.2)]
+    rows = [
+        row("answerable", "answered", "correct", fixture=True, latency=None),
+        row("answerable", "abstained", "incorrect", latency=0.2),
+    ]
     m = compute_metrics(rows)
     assert m["latency"]["p95_ms"] is None and m["latency"]["n"] == 0
 
@@ -88,7 +145,8 @@ def test_fixture_rows_never_report_latency():
 def test_criteria_pass_fail_and_small_samples():
     cfg, _ = criteria_config()
     rows = [row("answerable", "answered", "correct", cid=f"A{i}") for i in range(9)] + [
-        row("answerable", "answered", "incorrect", cid="A9")]
+        row("answerable", "answered", "incorrect", cid="A9")
+    ]
     crit = {c["id"]: c for c in evaluate_criteria(compute_metrics(rows), rows, cfg)}
     assert crit["correctness"]["state"] == "pass" and crit["correctness"]["n"] == 10
     assert crit["abstention_quality"]["state"] == "insufficient"  # no unanswerable cases

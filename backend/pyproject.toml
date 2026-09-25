@@ -1,0 +1,23 @@
+[project]
+name = "decision-lab-backend"
+version = "1.0.0"
+requires-python = ">=3.10"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+# pyflakes, pycodestyle, isort, bugbear, pyupgrade, simplify, ruff-specific
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+# The source intentionally uses typographic quotes and dashes in user-facing copy.
+# E501: line length is handled by `ruff format`; long user-facing strings are left intact.
+ignore = ["E501", "RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"

@@ -1,7 +1,7 @@
 PY ?= .venv/bin/python
 PIP ?= .venv/bin/pip
 
-.PHONY: setup demo api web eval eval-dev reports fixtures test test-backend test-frontend clean-db
+.PHONY: setup demo api web eval eval-dev reports fixtures check lint test test-backend test-frontend clean-db
 
 setup:            ## Install backend and frontend dependencies
 	python3 -m venv .venv
@@ -31,13 +31,19 @@ reports:          ## Regenerate docs/evaluation_report.md and docs/decision_memo
 fixtures:         ## Rebuild the saved example responses used in fixture mode
 	$(PY) scripts/build_fixtures.py
 
+check: lint test  ## Everything CI runs: lint, format check, typecheck and all tests
+
+lint:             ## ruff (lint + format check) and ESLint + TypeScript
+	cd backend && ../.venv/bin/ruff check app tests ../scripts && ../.venv/bin/ruff format --check app tests ../scripts
+	cd frontend && npx eslint . && npx tsc -b
+
 test: test-backend test-frontend
 
 test-backend:
 	cd backend && ../$(PY) -m pytest
 
 test-frontend:
-	cd frontend && npx vitest run && npx tsc -b
+	cd frontend && npx vitest run
 
-clean-db:         ## Delete the local SQLite database (runs are re-seeded on next start)
-	rm -f results/lab.sqlite3
+clean-db:         ## Delete the local SQLite database. Live runs stay in results/runs/*.json; the fixture run is re-seeded
+	rm -f results/lab.sqlite3 results/lab.sqlite3-wal results/lab.sqlite3-shm

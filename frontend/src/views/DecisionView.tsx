@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api } from "../api";
+import { ErrorNotice, Loading } from "../components/Notice";
 import { StateBadge } from "../components/StatusBadge";
 import { APPROACHES, APPROACH_LABELS, msText, pct, usdText } from "../format";
-import { href } from "../router";
-import type { Criterion, DecisionResponse, RunSummary } from "../types";
-import { RunPicker } from "./RunPicker";
+import { href, navigate } from "../router";
+import type { Criterion } from "../types";
+import { useAsync } from "../useAsync";
+import { RunPicker, useRuns } from "./RunPicker";
 
 function fmt(unit: Criterion["unit"], v: number | null): string {
   if (v === null || v === undefined) return "—";
@@ -22,19 +24,26 @@ function measured(c: Criterion): string {
   return base;
 }
 
-export function DecisionView({ runId, onRun }: { runId: string | null; onRun: (id: string | null) => void }) {
-  const [data, setData] = useState<DecisionResponse | null>(null);
-  const [runs, setRuns] = useState<RunSummary[]>([]);
+export function DecisionView({ runParam }: { runParam: string | null }) {
+  const runs = useRuns();
+  const result = useAsync(`decision:${runParam ?? "latest"}`, () => api.decision(runParam ?? undefined));
   const [showAll, setShowAll] = useState(false);
 
-  useEffect(() => {
-    api.runs().then(setRuns);
-  }, []);
-  useEffect(() => {
-    api.decision(runId ?? undefined).then(setData);
-  }, [runId]);
-
-  if (!data) return <div className="view"><p className="muted">Loading…</p></div>;
+  if (result.error) {
+    return (
+      <div className="view">
+        <ErrorNotice error={result.error} onRetry={result.reload} />
+      </div>
+    );
+  }
+  const data = result.data;
+  if (!data) {
+    return (
+      <div className="view">
+        <Loading />
+      </div>
+    );
+  }
   const d = data.decision;
   const target = d?.approaches[d.target_approach];
   const isFixture = d?.run_mode === "fixture";
@@ -42,12 +51,18 @@ export function DecisionView({ runId, onRun }: { runId: string | null; onRun: (i
   return (
     <div className="view decision">
       <div className="toolbar">
-        <RunPicker runs={runs} value={d?.run_id ?? null} onChange={(id) => onRun(id)} />
+        <RunPicker runs={runs.data ?? []} value={d?.run_id ?? null} onChange={(id) => navigate("decision", { run: id })} />
         <span className="muted small">
           Criteria v{d?.criteria_version} · registered {d?.criteria_registered_on} · hash <span className="mono">{d?.criteria_hash}</span>
         </span>
       </div>
 
+      {d?.criteria_changed_since_run && (
+        <div className="notice notice-warn" role="note">
+          <strong>Criteria changed since this run.</strong> This verdict uses the criteria stored with the run. The current
+          config/launch_criteria.yaml differs; a new run is needed to evaluate against it.
+        </div>
+      )}
       {!data.live_available && (
         <section className="panel empty-live">
           <h2>No live evaluation yet</h2>
@@ -140,8 +155,9 @@ export function DecisionView({ runId, onRun }: { runId: string | null; onRun: (i
               </tbody>
             </table>
             <p className="muted small table-foot">
-              Thresholds were registered before any held-out results were viewed (config/launch_criteria.yaml). Correctness uses human review, then the model
-              judge, then deterministic fact matching. A criterion with too few cases or unmeasured values is “insufficient evidence”, never a pass.
+              These are the criteria stored with this run (config/launch_criteria.yaml at run time), so editing the file later cannot change
+              this verdict. Correctness source: {d.correctness_source ?? "human review > model judge > deterministic fact match"}. A criterion with
+              too few cases or too few measured values is “insufficient evidence”, never a pass.
             </p>
           </section>
 

@@ -1,4 +1,9 @@
 """Acceptance 5 and 8: one timeout does not stop a run; saved runs reopen with configuration intact."""
+
+import sqlite3
+
+import pytest
+
 from app.db import Database
 from app.evaluation import run_evaluation, summarize_run
 from app.llm import LLMError, ScriptedProvider
@@ -16,7 +21,12 @@ def flaky_model(system, user):
 
 def test_timeout_does_not_stop_remaining_cases(db):
     run_id = run_evaluation(
-        db, mode="live", splits=("development",), llm=ScriptedProvider(flaky_model), concurrency=2, export_dir=None,
+        db,
+        mode="live",
+        splits=("development",),
+        llm=ScriptedProvider(flaky_model),
+        concurrency=2,
+        export_dir=None,
     )
     run = db.get_run(run_id)
     rows = db.responses_for_run(run_id)
@@ -35,8 +45,9 @@ def test_unexpected_exception_is_recorded_not_raised(db):
     def boom(system, user):
         raise RuntimeError("provider SDK blew up")
 
-    run_id = run_evaluation(db, mode="live", splits=("development",), approaches=("basic_rag",),
-                            llm=ScriptedProvider(boom), export_dir=None)
+    run_id = run_evaluation(
+        db, mode="live", splits=("development",), approaches=("basic_rag",), llm=ScriptedProvider(boom), export_dir=None
+    )
     rows = db.responses_for_run(run_id)
     assert len(rows) == 15
     assert all(r["response"]["error"].startswith("internal_error") for r in rows)
@@ -80,3 +91,67 @@ def test_saved_run_reopens_through_api(client):
     run = client.get(f"/api/runs/{runs[0]['run_id']}").json()
     assert run["config_snapshot"]["approaches"]["guarded_rag"]["prompt"]["version"] == "guarded-rag-v1"
     assert run["metrics"]["held_out"]["guarded_rag"]["n_cases"] == 45
+
+
+def test_duplicate_approaches_are_run_once(db):
+    llm = ScriptedProvider(lambda s, u: "STATUS: ABSTAINED\nANSWER: no")
+    run_id = run_evaluation(
+        db, mode="live", splits=("development",), approaches=("search", "search"), llm=llm, export_dir=None
+    )
+    assert len(db.responses_for_run(run_id)) == 15
+
+
+def test_grading_failure_is_recorded_and_run_completes(db, monkeypatch):
+    from app import evaluation
+
+    real_grade = evaluation.grade
+    calls = {"n": 0}
+
+    def flaky_grade(case, resp, corpus):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("grader bug")
+        return real_grade(case, resp, corpus)
+
+    monkeypatch.setattr(evaluation, "grade", flaky_grade)
+    run_id = run_evaluation(
+        db,
+        mode="live",
+        splits=("development",),
+        approaches=("search",),
+        llm=ScriptedProvider(str),
+        concurrency=1,
+        export_dir=None,
+    )
+    rows = db.responses_for_run(run_id)
+    assert len(rows) == 15
+    assert (
+        sum(r["response"]["error"] is not None and r["response"]["error"].startswith("internal_error") for r in rows)
+        == 1
+    )
+    assert db.get_run(run_id)["status"] == "completed_with_errors"
+
+
+def test_storage_failure_marks_run_failed_instead_of_running(db, monkeypatch):
+    def broken(*args, **kwargs):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(db, "add_response", broken)
+    with pytest.raises(sqlite3.OperationalError):
+        run_evaluation(
+            db, mode="live", splits=("development",), approaches=("search",), llm=ScriptedProvider(str), export_dir=None
+        )
+    (run,) = db.list_runs()
+    assert run["status"] == "failed"
+
+
+def test_run_is_graded_against_its_own_dataset_snapshot(db, monkeypatch):
+    from app import results
+
+    run_id = run_evaluation(
+        db, mode="live", splits=("development",), approaches=("search",), llm=ScriptedProvider(str), export_dir=None
+    )
+    # Simulate the dataset file changing after the run: the run must still load with its own cases.
+    monkeypatch.setattr(results, "load_dataset", lambda: {"cases": [], "by_id": {}})
+    rows = results.load_rows(db, run_id)
+    assert len(rows) == 15 and all(r["case"]["split"] == "development" for r in rows)

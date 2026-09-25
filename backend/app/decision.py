@@ -1,4 +1,5 @@
-"""Apply the pre-registered launch criteria to a run's held-out metrics."""
+"""Apply the launch criteria stored with a run to its held-out metrics and recommend an action."""
+
 from __future__ import annotations
 
 import hashlib
@@ -7,10 +8,11 @@ import operator
 import yaml
 
 from .approaches.base import APPROACH_LABELS, APPROACH_NAMES
-from .dataset import load_dataset
+from .corpus import get_corpus
+from .dataset import answerability_counts, load_dataset
 from .db import Database
-from .evaluation import summarize_run
-from .grading import final_label
+from .grading import citation_is_valid
+from .results import load_rows, summarize_rows
 from .settings import CONFIG_DIR
 
 OPS = {"<=": operator.le, ">=": operator.ge}
@@ -48,45 +50,53 @@ def _get(metrics: dict, dotted: str):
     return cur
 
 
-def _examples(criterion_id: str, rows: list[dict], threshold) -> list[str]:
+def _examples(criterion_id: str, rows: list[dict], threshold: float) -> list[str]:
+    """Case IDs that illustrate why a criterion failed, most relevant first."""
+
+    def ids(selected: list[dict]) -> list[str]:
+        return [r["case_id"] for r in selected]
+
     if criterion_id == "access_safety":
-        return [r["case"]["case_id"] for r in rows if r["grade"]["disclosures"]]
+        return ids([r for r in rows if r["grade"]["disclosures"]])
     if criterion_id == "correctness":
-        return [
-            r["case"]["case_id"] for r in rows if r["case"]["answerability"] == "answerable"
-            and final_label(r["grade"], r["judge"], r["review"])[0] != "correct"
-        ]
+        return ids([r for r in rows if r["case"]["answerability"] == "answerable" and r["final_label"] != "correct"])
     if criterion_id == "citation_validity":
-        bad = []
-        for r in rows:
-            if r["response"]["status"] != "answered":
-                continue
-            cc = r["grade"]["citation_check"] or {}
-            support = (r["judge"] or {}).get("citations_support")
-            if support is None:
-                support = cc.get("supports_deterministic")
-            if not (cc.get("structurally_valid") and support):
-                bad.append(r["case"]["case_id"])
-        return bad
+        return ids(
+            [r for r in rows if r["response"]["status"] == "answered" and not citation_is_valid(r["grade"], r["judge"])]
+        )
     if criterion_id == "abstention_quality":
-        return [r["case"]["case_id"] for r in rows if r["case"]["answerability"] == "unanswerable" and not r["grade"]["abstained_correctly"]]
+        return ids(
+            [r for r in rows if r["case"]["answerability"] == "unanswerable" and not r["grade"]["abstained_correctly"]]
+        )
     if criterion_id == "latency_p95":
         slow = [r for r in rows if (r["response"].get("latency_ms") or 0) > threshold]
-        return [r["case"]["case_id"] for r in sorted(slow, key=lambda r: -r["response"]["latency_ms"])]
+        return ids(sorted(slow, key=lambda r: -r["response"]["latency_ms"]))
     if criterion_id == "cost_per_question":
         priced = [r for r in rows if r["response"].get("estimated_cost_usd") is not None]
-        return [r["case"]["case_id"] for r in sorted(priced, key=lambda r: -r["response"]["estimated_cost_usd"])[:5]]
+        return ids(sorted(priced, key=lambda r: -r["response"]["estimated_cost_usd"]))
     return []
 
 
 def evaluate_criteria(metrics: dict, rows: list[dict], cfg: dict) -> list[dict]:
     min_n = cfg.get("min_sample_size", 5)
+    min_coverage = cfg.get("min_measurement_coverage", 1.0)
     out = []
     for c in cfg["criteria"]:
         cid, thr, comp = c["id"], c["threshold"], c["comparator"]
         value = _get(metrics, c["metric"])
-        entry = {"id": cid, "label": c["label"], "comparator": comp, "threshold": thr, "unit": c["unit"],
-                 "value": value, "n": None, "state": None, "reason": None, "confidence": None, "example_case_ids": []}
+        entry = {
+            "id": cid,
+            "label": c["label"],
+            "comparator": comp,
+            "threshold": thr,
+            "unit": c["unit"],
+            "value": value,
+            "n": None,
+            "state": None,
+            "reason": None,
+            "confidence": None,
+            "example_case_ids": [],
+        }
         if cid == "access_safety":
             entry["n"] = metrics["access_safety"]["n_cases"]
         elif cid in ("correctness", "citation_validity", "abstention_quality"):
@@ -97,21 +107,29 @@ def evaluate_criteria(metrics: dict, rows: list[dict], cfg: dict) -> list[dict]:
         elif cid == "cost_per_question":
             entry["n"] = metrics["cost"]["n_with_usage"]
 
-        if cid == "latency_p95" and (metrics["latency"]["n_unmeasured"] or metrics.get("fixture_rows")):
+        measurement = {"latency_p95": metrics.get("latency"), "cost_per_question": metrics.get("cost")}.get(cid)
+        if measurement is not None and metrics.get("fixture_rows"):
             entry["state"] = "insufficient"
-            entry["reason"] = (f"latency not measured for {metrics['latency']['n_unmeasured']} of {metrics['n_cases']} cases"
-                               + (" (fixture responses)" if metrics.get("fixture_rows") else ""))
-        elif cid == "cost_per_question" and not metrics["cost"]["available"]:
+            entry["reason"] = "not measured: fixture responses have no latency or token usage"
+        elif measurement is not None and measurement["coverage"] < min_coverage:
             entry["state"] = "insufficient"
-            entry["reason"] = f"token usage unavailable for {metrics['cost']['n_missing']} of {metrics['n_cases']} cases"
+            entry["reason"] = (
+                f"measured for only {entry['n']} of {metrics['n_cases']} cases (minimum {min_coverage:.0%} coverage)"
+            )
         elif value is None or (entry["n"] is not None and entry["n"] < min_n):
             entry["state"] = "insufficient"
             entry["reason"] = f"only {entry['n'] or 0} evaluated cases (minimum {min_n})"
         else:
             entry["state"] = "pass" if OPS[comp](value, thr) else "fail"
             if "ci_low" in entry and entry["ci_low"] is not None:
-                crosses = entry["ci_low"] < thr <= entry["ci_high"] if comp == ">=" else entry["ci_low"] <= thr < entry["ci_high"]
+                crosses = (
+                    entry["ci_low"] < thr <= entry["ci_high"]
+                    if comp == ">="
+                    else entry["ci_low"] <= thr < entry["ci_high"]
+                )
                 entry["confidence"] = "low" if crosses else "ok"
+        if measurement is not None and entry["state"] in ("pass", "fail") and measurement["coverage"] < 1:
+            entry["reason"] = f"based on the {entry['n']} of {metrics['n_cases']} cases that were measured"
         if entry["state"] == "fail":
             entry["example_case_ids"] = _examples(cid, rows, thr)[:8]
         out.append(entry)
@@ -122,38 +140,57 @@ def recommend(criteria: list[dict], is_fixture: bool) -> dict:
     fails = [c for c in criteria if c["state"] == "fail"]
     insufficient = [c for c in criteria if c["state"] == "insufficient"]
     if is_fixture:
-        return {"verdict": "demonstration_only", "headline": "Demonstration only: fixture data is not evidence",
-                "summary": "These results come from saved example responses written to exercise the interface. "
-                           "They are not model measurements and cannot support a launch decision. Run a live evaluation."}
+        return {
+            "verdict": "demonstration_only",
+            "headline": "Demonstration only: fixture data is not evidence",
+            "summary": "These results come from saved example responses written to exercise the interface. "
+            "They are not model measurements and cannot support a launch decision. Run a live evaluation.",
+        }
     if any(c["id"] == "access_safety" for c in fails):
-        return {"verdict": "do_not_launch", "headline": "Do not launch: restricted content was disclosed",
-                "summary": "Guarded RAG disclosed restricted content to an unauthorized role. This is a hard stop regardless of other results."}
+        return {
+            "verdict": "do_not_launch",
+            "headline": "Do not launch: restricted content was disclosed",
+            "summary": "Guarded RAG disclosed restricted content to an unauthorized role. This is a hard stop regardless of other results.",
+        }
     if fails:
         names = ", ".join(c["label"].lower() for c in fails)
-        return {"verdict": "do_not_launch_yet", "headline": "Do not launch yet",
-                "summary": f"Guarded RAG misses {len(fails)} of {len(criteria)} launch criteria ({names}). Fix these and re-test on a fresh held-out set."}
+        return {
+            "verdict": "do_not_launch_yet",
+            "headline": "Do not launch yet",
+            "summary": f"Guarded RAG misses {len(fails)} of {len(criteria)} launch criteria ({names}). Fix these and re-test on a fresh held-out set.",
+        }
     if insufficient:
         names = ", ".join(c["label"].lower() for c in insufficient)
-        return {"verdict": "insufficient_evidence", "headline": "Insufficient evidence",
-                "summary": f"No criterion failed, but these could not be assessed: {names}."}
+        return {
+            "verdict": "insufficient_evidence",
+            "headline": "Insufficient evidence",
+            "summary": f"No criterion failed, but these could not be assessed: {names}.",
+        }
     low = [c for c in criteria if c.get("confidence") == "low"]
-    summary = "Guarded RAG meets every pre-registered criterion on the held-out set. Proceed to a limited pilot, not a general launch."
+    summary = "Guarded RAG meets every launch criterion on the held-out set. Proceed to a limited pilot, not a general launch."
     if low:
-        summary += " Note: the confidence interval for " + ", ".join(c["label"].lower() for c in low) + " still crosses the threshold, so confirm it in the pilot."
+        summary += (
+            " Note: the confidence interval for "
+            + ", ".join(c["label"].lower() for c in low)
+            + " still crosses the threshold, so confirm it in the pilot."
+        )
     return {"verdict": "limited_pilot", "headline": "Proceed to a limited pilot", "summary": summary}
+
+
+def run_criteria(run: dict) -> tuple[dict, str]:
+    """The criteria stored with the run when it was created, so later edits cannot change its verdict."""
+    snapshot = run.get("config_snapshot") or {}
+    if snapshot.get("launch_criteria") and snapshot.get("launch_criteria_hash"):
+        return snapshot["launch_criteria"], snapshot["launch_criteria_hash"]
+    return criteria_config()
 
 
 def build_decision(db: Database, run_id: str) -> dict:
     run = db.get_run(run_id)
-    cfg, cfg_hash = criteria_config()
+    cfg, cfg_hash = run_criteria(run)
     split = cfg.get("evaluated_split", "held_out")
-    dataset = load_dataset()
-    summary = summarize_run(db, run_id)
-    rows = db.responses_for_run(run_id)
-    for r in rows:
-        r["case"] = dataset["by_id"][r["case_id"]]
-    split_rows = [r for r in rows if r["case"]["split"] == split]
-    split_metrics = summary.get(split, {})
+    split_rows = [r for r in load_rows(db, run_id) if r["case"]["split"] == split]
+    split_metrics = summarize_rows(split_rows).get(split, {})
     is_fixture = run["mode"] == "fixture"
 
     per_approach = {}
@@ -161,55 +198,89 @@ def build_decision(db: Database, run_id: str) -> dict:
         if a not in split_metrics:
             continue
         crit = evaluate_criteria(split_metrics[a], [r for r in split_rows if r["approach"] == a], cfg)
-        per_approach[a] = {"label": APPROACH_LABELS[a], "criteria": crit,
-                           "passes": sum(c["state"] == "pass" for c in crit), "total": len(crit)}
+        per_approach[a] = {
+            "label": APPROACH_LABELS[a],
+            "criteria": crit,
+            "passes": sum(c["state"] == "pass" for c in crit),
+            "total": len(crit),
+        }
 
     target = cfg.get("target_approach", "guarded_rag")
     baseline = cfg.get("baseline_approach", "search")
-    rec = recommend(per_approach[target]["criteria"], is_fixture) if target in per_approach else {
-        "verdict": "insufficient_evidence", "headline": "Insufficient evidence",
-        "summary": f"This run has no {split} results for {APPROACH_LABELS.get(target, target)}."}
-
-    comparison = None
-    if target in split_metrics and baseline in split_metrics:
-        t, b = split_metrics[target], split_metrics[baseline]
-        tc, bc = t["correctness"]["value"], b["correctness"]["value"]
-        comparison = {
-            "target": target, "baseline": baseline,
-            "correctness_lift_pp": round((tc - bc) * 100, 1) if tc is not None and bc is not None else None,
-            "target_correct": f"{t['correctness']['numerator']}/{t['correctness']['denominator']}",
-            "baseline_correct": f"{b['correctness']['numerator']}/{b['correctness']['denominator']}",
-            "target_p95_ms": t["latency"]["p95_ms"], "baseline_p95_ms": b["latency"]["p95_ms"],
-            "target_cost_per_question": t["cost"]["per_question_usd"],
-            "baseline_cost_per_question": b["cost"]["per_question_usd"],
+    if target in per_approach:
+        rec = recommend(per_approach[target]["criteria"], is_fixture)
+    else:
+        rec = {
+            "verdict": "insufficient_evidence",
+            "headline": "Insufficient evidence",
+            "summary": f"This run has no {split} results for {APPROACH_LABELS.get(target, target)}.",
         }
 
-    failing = [c["id"] for c in per_approach.get(target, {}).get("criteria", []) if c["state"] in ("fail", "insufficient")]
+    failing = [
+        c["id"] for c in per_approach.get(target, {}).get("criteria", []) if c["state"] in ("fail", "insufficient")
+    ]
     return {
         "run_id": run_id,
         "run_mode": run["mode"],
         "run_created_at": run["created_at"],
         "model_config": run["model_config"],
         "evaluated_split": split,
-        "n_cases": len({r["case"]["case_id"] for r in split_rows}),
+        "n_cases": len({r["case_id"] for r in split_rows}),
         "criteria_version": cfg["version"],
         "criteria_hash": cfg_hash,
+        "criteria_changed_since_run": cfg_hash != criteria_config()[1],
+        "correctness_source": cfg.get("correctness_source"),
         "criteria_registered_on": str(cfg.get("registered_on")),
         "target_approach": target,
         "recommendation": rec,
         "approaches": per_approach,
-        "comparison": comparison,
-        "next_experiments": [{"criterion": f, "text": NEXT_EXPERIMENTS[f]} for f in failing if f in NEXT_EXPERIMENTS and not is_fixture],
+        "comparison": _comparison(split_metrics, target, baseline),
+        "next_experiments": []
+        if is_fixture
+        else [{"criterion": f, "text": NEXT_EXPERIMENTS[f]} for f in failing if f in NEXT_EXPERIMENTS],
         "rollout_tests": ROLLOUT_TESTS,
-        "limitations": LIMITATIONS,
+        "limitations": limitations(split),
     }
 
 
-LIMITATIONS = [
-    "60 synthetic questions (45 held out) on a 21-document synthetic corpus. Enough to demonstrate a decision process, not to establish production reliability.",
-    "Small denominators: 6 unanswerable and about 35 answerable held-out cases, so one case moves a rate by 3 to 17 points. Confidence intervals are shown for that reason.",
-    "Questions were written by the same author as the documents, so they are cleaner and closer to the document wording than real employee questions.",
-    "Deterministic fact matching is strict about figures and lenient about wording; the model judge is itself a model and can be wrong. Human review is the tie-breaker.",
-    "Latency was measured from one machine and region at low concurrency; production latency and cost at peak volume are untested.",
-    "Roles are selected in the UI, not authenticated. Access control is tested at the retrieval layer only.",
-]
+def _comparison(split_metrics: dict, target: str, baseline: str) -> dict | None:
+    """Target versus baseline on correctness, latency and cost: the product question in numbers."""
+    if target not in split_metrics or baseline not in split_metrics:
+        return None
+    t, b = split_metrics[target], split_metrics[baseline]
+    tc, bc = t["correctness"]["value"], b["correctness"]["value"]
+    return {
+        "target": target,
+        "baseline": baseline,
+        "correctness_lift_pp": round((tc - bc) * 100, 1) if tc is not None and bc is not None else None,
+        "target_correct": f"{t['correctness']['numerator']}/{t['correctness']['denominator']}",
+        "baseline_correct": f"{b['correctness']['numerator']}/{b['correctness']['denominator']}",
+        "target_p95_ms": t["latency"]["p95_ms"],
+        "baseline_p95_ms": b["latency"]["p95_ms"],
+        "target_cost_per_question": t["cost"]["per_question_usd"],
+        "baseline_cost_per_question": b["cost"]["per_question_usd"],
+    }
+
+
+def limitations(split: str) -> list[str]:
+    """Limits of the experiment, with sample sizes computed from the dataset rather than hardcoded."""
+    ds = load_dataset()
+    counts = answerability_counts(split)
+    smallest = min(n for n in counts.values() if n)
+    largest = max(counts.values())
+    return [
+        f"{len(ds['cases'])} synthetic questions ({sum(counts.values())} in the {split.replace('_', '-')} set) on a "
+        f"{len(get_corpus().documents)}-document synthetic corpus. Enough to demonstrate a decision process, "
+        "not to establish production reliability.",
+        f"Small denominators: {counts['answerable']} answerable, {counts['unanswerable']} unanswerable and "
+        f"{counts['access_denied']} access-denied cases, so one case moves a rate by {100 / largest:.0f} to "
+        f"{100 / smallest:.0f} points. Confidence intervals are shown for that reason.",
+        "Questions were written by the same author as the documents, so they are cleaner and closer to the "
+        "document wording than real employee questions.",
+        "Deterministic fact matching is strict about figures and lenient about wording; the model judge is itself "
+        "a model and can be wrong. Human review is the tie-breaker.",
+        "Latency was measured from one machine and region at low concurrency; production latency and cost at "
+        "peak volume are untested.",
+        "Roles are selected in the UI, not authenticated. Access control is enforced and tested in the backend "
+        "(retrieval, model context, citations, previews), not against a real identity provider.",
+    ]

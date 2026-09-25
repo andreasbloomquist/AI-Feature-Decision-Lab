@@ -1,33 +1,38 @@
-import { useEffect, useState } from "react";
+import { useRef, useState } from "react";
 import { api } from "../api";
 import { AnswerCard } from "../components/AnswerCard";
+import { ErrorNotice } from "../components/Notice";
+import { useConfig } from "../configContext";
 import { APPROACHES, APPROACH_LABELS } from "../format";
-import type { ApproachId, ApproachResponse, Health, Role } from "../types";
+import type { ApproachId, ApproachResponse } from "../types";
+import { useAsync } from "../useAsync";
 
-export function AskView({ health, roles }: { health: Health | null; roles: Role[] }) {
-  const [question, setQuestion] = useState("Can I expense a client dinner without a receipt?");
-  const [role, setRole] = useState("employee");
+const DEFAULT_QUESTION = "Can I expense a client dinner without a receipt?";
+
+export function AskView({ initialQuestion, initialRole }: { initialQuestion: string | null; initialRole: string | null }) {
+  const config = useConfig();
+  const [question, setQuestion] = useState(initialQuestion ?? DEFAULT_QUESTION);
+  const [role, setRole] = useState(initialRole ?? "employee");
   const [selected, setSelected] = useState<ApproachId[]>([...APPROACHES]);
-  const [samples, setSamples] = useState<{ question: string; role: string; case_id: string }[]>([]);
-  const [results, setResults] = useState<{ role: string; responses: ApproachResponse[] } | null>(null);
+  const [results, setResults] = useState<{ question: string; role: string; responses: ApproachResponse[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    api.samples().then(setSamples).catch(() => setSamples([]));
-  }, []);
+  const samples = useAsync("samples", api.samples);
+  const latestRequest = useRef(0);
 
   const submit = async (q = question, r = role) => {
     if (q.trim().length < 3 || !selected.length) return;
+    const requestId = ++latestRequest.current;
     setLoading(true);
     setError(null);
     try {
       const res = await api.ask(q, r, selected);
-      setResults({ role: res.role, responses: res.responses });
-    } catch {
-      setError("The server did not respond. Is the backend running on port 8000?");
+      // Ignore a slow answer to an earlier question that arrives after a newer one was asked.
+      if (requestId === latestRequest.current) setResults({ question: q, role: res.role, responses: res.responses });
+    } catch (e) {
+      if (requestId === latestRequest.current) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (requestId === latestRequest.current) setLoading(false);
     }
   };
 
@@ -50,8 +55,8 @@ export function AskView({ health, roles }: { health: Health | null; roles: Role[
           <div className="ask-controls">
             <label className="inline-field">
               <span className="field-label">Asking as</span>
-              <select value={role} onChange={(e) => setRole(e.target.value)} aria-label="User role">
-                {roles.map((r) => (
+              <select value={role} onChange={(e) => setRole(e.target.value)}>
+                {(config?.roles ?? []).map((r) => (
                   <option key={r.id} value={r.id}>{r.label}</option>
                 ))}
               </select>
@@ -66,11 +71,11 @@ export function AskView({ health, roles }: { health: Health | null; roles: Role[
             </fieldset>
           </div>
         </form>
-        {health?.mode === "fixture" && samples.length > 0 && (
+        {config?.settings.mode === "fixture" && samples.data && samples.data.length > 0 && (
           <div className="samples">
             <span className="muted small">Demo mode has saved AI responses for these questions (Search always runs live):</span>
             <div className="sample-list">
-              {samples.map((s) => (
+              {samples.data.map((s) => (
                 <button
                   key={s.case_id}
                   className="sample"
@@ -89,9 +94,14 @@ export function AskView({ health, roles }: { health: Health | null; roles: Role[
         )}
       </section>
 
-      {error && <div className="notice notice-bad">{error}</div>}
+      {error && <ErrorNotice error={error} />}
       {results && (
-        <section className={`answers answers-${results.responses.length}`} aria-live="polite">
+        <p className="muted small answers-for" aria-live="polite">
+          Answers to “{results.question}” as {config?.roles.find((r) => r.id === results.role)?.label ?? results.role}
+        </p>
+      )}
+      {results && (
+        <section className={`answers answers-${results.responses.length}`}>
           {results.responses.map((r) => (
             <AnswerCard key={r.approach} response={r} role={results.role} />
           ))}

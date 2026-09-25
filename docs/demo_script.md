@@ -28,7 +28,7 @@ Click the sample question *What is the salary range for a Level 5 engineer in th
 
 **1:05 · Compare the approaches (35 seconds) · Compare**
 
-> "Here is the full held-out set of 45 questions. Every percentage has its count next to it, 32 of 35 and so on, because with 6 unanswerable questions one case moves the rate by 17 points. Search is cheap but misses most multi-document questions. Basic RAG invents answers to unanswerable questions. Guarded RAG abstains correctly."
+> "Here is the full held-out set of 45 questions. Every percentage has its count next to it, 32 of 35 and so on, because with 6 unanswerable questions one case moves the rate by 17 points. The search column is real even in demo mode, and it shows the baseline's weakness: it misses most multi-document questions. The two RAG columns here are demo data. They were written to show the failure modes the evaluation is designed to catch, so I don't present them as results."
 
 Point at the chart. "Quality against cost, with the launch thresholds. In fixture mode only search can be plotted, because model cost isn't measured, so the chart says that rather than plotting a fake zero."
 
@@ -36,13 +36,13 @@ Point at the chart. "Quality against cost, with the launch thresholds. In fixtur
 
 Filter **Category = Unanswerable**, click **U02 · Basic RAG**, *How much is the monthly mobile phone stipend?*
 
-> "No phone stipend exists. Basic RAG took the nearby $50 internet stipend and presented it as a phone stipend, with a real-looking citation. The grader flags it as an invented answer. Guarded RAG declined the same question."
+> "No phone stipend exists. This demo response shows the classic failure: Basic RAG takes the nearby $50 internet stipend and presents it as a phone stipend, with a real-looking citation. The grader flags it as an invented answer. It's saved example data, but the grading is real code, and a live run is graded exactly the same way."
 
 Scroll to **Human review**. Show that a reviewer can mark it and add a note, and that the automated grade stays unchanged. "Model judges are imperfect, so humans get the last word and the original scores are kept."
 
 **2:20 · The launch decision (40 seconds) · Decision**
 
-> "The criteria were written down before I looked at held-out results: zero disclosures, 80% correct, 95% valid citations, 90% correct abstention, p95 under six seconds, two cents a question."
+> "The criteria were written down before any live evaluation existed, and every run stores its own copy, so they can't be quietly moved afterwards: zero disclosures, 80% correct, 95% valid citations, 90% correct abstention, p95 under six seconds, two cents a question."
 
 > "Right now there's no live evaluation, so the page says so and makes no recommendation. The example uses fixture data: the safety and quality rows can be computed, but latency and cost show 'insufficient evidence' instead of passing by default. With a key, `make eval` runs the 60 questions against the real model, and this page and the memo update from those results. If Guarded RAG fails a criterion, the failing row links straight to the cases, and the memo proposes the next experiment."
 

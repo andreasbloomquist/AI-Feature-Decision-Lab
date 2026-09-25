@@ -4,6 +4,7 @@ Access control happens *before* indexing: each role gets its own index built onl
 active documents it may read, so restricted text never enters scoring, term statistics,
 snippets or model context for that role.
 """
+
 from __future__ import annotations
 
 import math
@@ -16,30 +17,105 @@ from .access import authorized_documents, check_role
 from .corpus import Corpus, Passage
 
 STOPWORDS = set(
-    """a an and are as at be by can do does for from get got has have how i if in into is it its
-    me my of on or our so than that the their them then there these they this to up was we what
-    when where which who whom why will with would you your much many any after before about
-    should need needs must may i'm im also only just""".split()
+    [
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "can",
+        "do",
+        "does",
+        "for",
+        "from",
+        "get",
+        "got",
+        "has",
+        "have",
+        "how",
+        "i",
+        "if",
+        "in",
+        "into",
+        "is",
+        "it",
+        "its",
+        "me",
+        "my",
+        "of",
+        "on",
+        "or",
+        "our",
+        "so",
+        "than",
+        "that",
+        "the",
+        "their",
+        "them",
+        "then",
+        "there",
+        "these",
+        "they",
+        "this",
+        "to",
+        "up",
+        "was",
+        "we",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "whom",
+        "why",
+        "will",
+        "with",
+        "would",
+        "you",
+        "your",
+        "much",
+        "many",
+        "any",
+        "after",
+        "before",
+        "about",
+        "should",
+        "need",
+        "needs",
+        "must",
+        "may",
+        "i'm",
+        "im",
+        "also",
+        "only",
+        "just",
+    ]
 )
+
+DEFAULT_K1 = 1.5  # term-frequency saturation
+DEFAULT_B = 0.75  # length normalisation
 
 TOKEN_RE = re.compile(r"[a-z0-9£$]+(?:[.,][0-9]+)*")
 
 
 def _stem(tok: str) -> str:
-    for suffix in ("ies",):
-        if tok.endswith(suffix) and len(tok) > 4:
-            return tok[: -len(suffix)] + "y"
+    """Deliberately light stemming: plurals only ("policies" -> "policy", "receipts" -> "receipt")."""
+    if tok.endswith("ies") and len(tok) > 4:
+        return tok[:-3] + "y"
     if tok.endswith("s") and not tok.endswith("ss") and len(tok) > 3:
         return tok[:-1]
     return tok
 
 
 def tokenize(text: str) -> list[str]:
-    text = text.lower().replace("’", "'")
+    """Lower-case word tokens with stop words removed; "$2,000" becomes "$2000"."""
     out = []
-    for tok in TOKEN_RE.findall(text):
-        tok = tok.replace(",", "")
-        if tok in STOPWORDS or len(tok) < 2 and not tok.isdigit():
+    for raw in TOKEN_RE.findall(text.lower().replace("’", "'")):
+        tok = raw.replace(",", "")
+        if tok in STOPWORDS or (len(tok) < 2 and not tok.isdigit()):
             continue
         out.append(_stem(tok))
     return out
@@ -52,7 +128,7 @@ class ScoredPassage:
 
 
 class BM25Index:
-    def __init__(self, passages: list[Passage], titles: dict[str, str], k1: float = 1.5, b: float = 0.75):
+    def __init__(self, passages: list[Passage], titles: dict[str, str], k1: float = DEFAULT_K1, b: float = DEFAULT_B):
         self.passages = passages
         self.k1, self.b = k1, b
         # Index the document title and section heading with the text so "travel policy" style
@@ -93,7 +169,7 @@ class Retriever:
         self._indexes: dict[tuple, BM25Index] = {}
         self._lock = Lock()
 
-    def index_for(self, role: str, k1: float = 1.5, b: float = 0.75) -> BM25Index:
+    def index_for(self, role: str, k1: float = DEFAULT_K1, b: float = DEFAULT_B) -> BM25Index:
         check_role(role)
         key = (role, k1, b)
         with self._lock:
@@ -104,5 +180,7 @@ class Retriever:
                 self._indexes[key] = BM25Index(passages, titles, k1=k1, b=b)
             return self._indexes[key]
 
-    def retrieve(self, query: str, role: str, k: int = 5, k1: float = 1.5, b: float = 0.75) -> list[ScoredPassage]:
+    def retrieve(
+        self, query: str, role: str, k: int = 5, k1: float = DEFAULT_K1, b: float = DEFAULT_B
+    ) -> list[ScoredPassage]:
         return self.index_for(role, k1, b).search(query, k)

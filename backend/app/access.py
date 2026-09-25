@@ -1,4 +1,5 @@
 """Role-based access control. Applied before retrieval, to model context, to citations and to previews."""
+
 from __future__ import annotations
 
 from .corpus import Corpus, Document
@@ -34,10 +35,7 @@ def can_access(role: str, doc: Document) -> bool:
 
 
 def authorized_documents(corpus: Corpus, role: str, *, active_only: bool) -> list[Document]:
-    return [
-        d for d in corpus.documents.values()
-        if can_access(role, d) and (d.is_active or not active_only)
-    ]
+    return [d for d in corpus.documents.values() if can_access(role, d) and (d.is_active or not active_only)]
 
 
 def restricted_document_ids(corpus: Corpus, role: str) -> set[str]:

@@ -1,14 +1,9 @@
-import sys
-from pathlib import Path
-
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from app.approaches import ApproachContext, build_approaches  # noqa: E402
-from app.corpus import get_corpus  # noqa: E402
-from app.db import Database  # noqa: E402
-from app.retrieval import Retriever  # noqa: E402
+from app.approaches import ApproachContext, build_approaches
+from app.corpus import get_corpus
+from app.db import Database
+from app.retrieval import Retriever
 
 
 @pytest.fixture
@@ -25,6 +20,7 @@ def retriever(corpus):
 def make_approaches(corpus, retriever):
     def _make(llm):
         return build_approaches(ApproachContext(corpus=corpus, retriever=retriever, llm=llm))
+
     return _make
 
 
@@ -43,9 +39,7 @@ def client(tmp_path, monkeypatch):
 
     from app import main
 
-    main.get_settings.cache_clear()
-    main.get_db.cache_clear()
+    main.reset_caches()
     with TestClient(main.app) as c:
         yield c
-    main.get_settings.cache_clear()
-    main.get_db.cache_clear()
+    main.reset_caches()

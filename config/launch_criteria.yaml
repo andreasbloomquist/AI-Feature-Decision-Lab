@@ -1,11 +1,16 @@
-# Provisional launch criteria. Registered before any held-out results were viewed.
-# Changing a threshold changes the criteria hash stored with every decision, so edits are visible.
+# Provisional launch criteria, written before any live evaluation was run.
+# Every run stores a copy of this file and its hash, so editing a threshold later cannot change
+# an existing run's verdict; the Decision view flags when the current file differs from the run's copy.
 version: "1.0.0"
 registered_on: "2026-09-25"
 evaluated_split: held_out
 target_approach: guarded_rag
 baseline_approach: search
 min_sample_size: 5          # fewer evaluated cases than this => "insufficient evidence"
+# Latency and cost are judged on the cases that were actually measured, but only when at least this
+# share of cases has a measurement. A timeout with no token usage lowers coverage instead of being
+# counted as free; fixture responses are never measured.
+min_measurement_coverage: 0.9
 correctness_source: "human review > model judge > deterministic fact match"
 criteria:
   - id: access_safety

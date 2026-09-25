@@ -1,10 +1,11 @@
 """Aggregate metrics. Every rate carries its numerator, denominator and a Wilson 95% interval."""
+
 from __future__ import annotations
 
 import math
 import statistics
 
-from .grading import final_label
+from .grading import citation_is_valid, final_label
 
 
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float | None, float | None]:
@@ -19,7 +20,14 @@ def wilson(k: int, n: int, z: float = 1.96) -> tuple[float | None, float | None]
 
 def rate(k: int, n: int, **extra) -> dict:
     lo, hi = wilson(k, n)
-    return {"value": round(k / n, 4) if n else None, "numerator": k, "denominator": n, "ci_low": lo, "ci_high": hi, **extra}
+    return {
+        "value": round(k / n, 4) if n else None,
+        "numerator": k,
+        "denominator": n,
+        "ci_low": lo,
+        "ci_high": hi,
+        **extra,
+    }
 
 
 def percentile(values: list[float], pct: float) -> float | None:
@@ -41,17 +49,8 @@ def compute_metrics(rows: list[dict]) -> dict:
     det_correct = sum(1 for r in answerable if r["grade"]["deterministic_label"] == "correct")
 
     answered = [r for r in rows if r["response"]["status"] == "answered"]
-    valid_cites = 0
-    judge_support_used = 0
-    for r in answered:
-        cc = r["grade"]["citation_check"] or {}
-        support = cc.get("supports_deterministic", False)
-        j = r.get("judge") or {}
-        if j.get("citations_support") is not None:
-            support = j["citations_support"]
-            judge_support_used += 1
-        if cc.get("structurally_valid") and support:
-            valid_cites += 1
+    valid_cites = sum(1 for r in answered if citation_is_valid(r["grade"], r.get("judge")))
+    judge_support_used = sum(1 for r in answered if (r.get("judge") or {}).get("citations_support") is not None)
 
     unanswerable = [r for r in rows if r["case"]["answerability"] == "unanswerable"]
     abst_ok = sum(1 for r in unanswerable if r["grade"]["abstained_correctly"])
@@ -72,12 +71,13 @@ def compute_metrics(rows: list[dict]) -> dict:
     known = [c for c in costs if c is not None]
     missing = len(costs) - len(known)
     cost = {
-        "available": bool(rows) and missing == 0,
+        "complete": bool(rows) and missing == 0,
         "n_with_usage": len(known),
         "n_missing": missing,
+        "coverage": round(len(known) / len(rows), 4) if rows else 0.0,
         "total_usd": round(sum(known), 6) if known else None,
-        "per_question_usd": round(sum(known) / len(known), 6) if known and missing == 0 else None,
-        "per_question_known_usd": round(sum(known) / len(known), 6) if known else None,
+        # Average over the cases whose cost is known; `coverage` says how many that is.
+        "per_question_usd": round(sum(known) / len(known), 6) if known else None,
     }
     tokens_in = [r["response"]["input_tokens"] for r in rows if r["response"].get("input_tokens") is not None]
     tokens_out = [r["response"]["output_tokens"] for r in rows if r["response"].get("output_tokens") is not None]
@@ -98,6 +98,7 @@ def compute_metrics(rows: list[dict]) -> dict:
         "latency": {
             "n": len(measured),
             "n_unmeasured": len(rows) - len(measured),
+            "coverage": round(len(measured) / len(rows), 4) if rows else 0.0,
             "p50_ms": round(statistics.median(measured), 1) if measured else None,
             "p95_ms": percentile(measured, 95),
         },

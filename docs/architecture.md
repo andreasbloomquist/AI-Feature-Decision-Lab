@@ -59,18 +59,18 @@ flowchart LR
 1. The UI sends `question`, `role` and the selected approaches to `POST /api/ask`.
 2. `access.py` maps the role to its groups. `retrieval.py` returns passages from that role's index, which contains **only active documents the role may read**. Restricted and superseded text never reaches scoring, the model, or the response.
 3. Search extracts the best sentence. Basic and Guarded RAG format the passages with IDs such as `[NS-TRV-2026#3]` and call the provider (`llm.py`). Without a key, `FixtureProvider` replays saved example outputs and marks them `fixture: true` with no latency or tokens.
-4. `citations.py` parses markers and validates each: the document exists, the role may read it, it is active, and the passage was in the context. Basic RAG keeps its answer but flags invalid citations; Guarded RAG withholds the answer and records `citation_validation_failed`.
+4. `citations.py` parses markers, matching IDs regardless of case, and validates each one: the document exists, the role may read it, it is active, and the passage was in the context. Basic RAG keeps its answer but flags invalid citations and redacts any restricted ID. Guarded RAG withholds the answer, recording `citation_validation_failed`, if any citation fails, a marker is malformed, or the answer names a document the role may not read.
 5. Every approach returns the common object: `answer, status, citations, retrieved_document_ids, latency_ms, input_tokens, output_tokens, estimated_cost_usd, error`.
-6. Clicking a citation calls `GET /api/documents/{id}?role=`, which returns 403 with no title or text if the role may not read it.
+6. Clicking a citation calls `GET /api/documents/{id}?role=`. If the role may not read the document, it returns the same 404 as for a document that doesn't exist, with no title or text, so restricted IDs can't be probed.
 
 ## Evaluation path
 
-1. `python -m app.evaluation` (or `make eval`) creates a new run row with the corpus hash, dataset hash, prompt versions, model configuration and a full configuration snapshot. Runs are never overwritten.
-2. Each case × approach runs in isolation; any exception or timeout becomes an `error` response and the run continues.
+1. `python -m app.evaluation` (or `make eval`) creates a new run row. It holds the corpus hash, dataset hash, prompt versions, model configuration, and a snapshot of the prompts, settings, launch criteria and dataset cases. Runs are never overwritten.
+2. Each case × approach runs in isolation: any exception or timeout while answering or grading becomes an `error` response and the run continues. A failure outside a single case marks the run `failed`.
 3. `grading.py` scores every response deterministically; `judge.py` optionally adds a model verdict with rationale for answered, answerable cases.
 4. Responses, grades and judge verdicts go to SQLite; the run is also exported to `results/runs/<run_id>.json`.
-5. `metrics.py` computes rates with counts and Wilson intervals, latency percentiles and cost from recorded tokens. Metrics are recomputed on read so human reviews count, while the automated grade is preserved.
-6. `decision.py` applies `config/launch_criteria.yaml` to the held-out metrics. `reports.py` writes the evaluation report and decision memo.
+5. `results.py` loads a run's responses joined to the cases stored with that run. `metrics.py` computes rates with counts and Wilson intervals, latency percentiles and cost from recorded tokens. Metrics are recomputed on read so human reviews count, while the automated grade is preserved.
+6. `decision.py` applies the launch criteria *stored with the run* to its held-out metrics, and flags when `config/launch_criteria.yaml` has changed since. Latency and cost need at least 90% of cases measured. `reports.py` writes the evaluation report and decision memo.
 
 ## Module map
 
@@ -84,8 +84,10 @@ flowchart LR
 | `backend/app/citations.py` | Marker parsing, validation, redaction |
 | `backend/app/grading.py`, `judge.py`, `metrics.py` | Scoring |
 | `backend/app/evaluation.py` | Runner and CLI |
+| `backend/app/results.py` | Read side of runs: rows joined to cases, success rule, per-split summaries |
 | `backend/app/decision.py`, `reports.py` | Criteria, recommendation, generated docs |
-| `backend/app/db.py` | SQLite schema and queries |
+| `backend/app/db.py` | SQLite schema and queries (WAL, foreign keys, busy timeout) |
+| `frontend/src/useAsync.ts` | Data loading with error state; ignores out-of-order responses |
 | `frontend/src/views/` | Ask, Compare, Inspect, Decision |
 
 ## Who sees what

@@ -1,17 +1,34 @@
 import type {
-  ApproachId, ApproachResponse, CaseDetail, CaseRow, DecisionResponse, DocumentDetail, Health, Role, RunDetail, RunSummary,
+  AppConfig,
+  ApproachId, ApproachResponse, CaseDetail, CaseRow, DecisionResponse, DocumentDetail, Health, RunDetail, RunSummary,
 } from "./types";
 
+/** A non-2xx response. `status` is 0 when the server could not be reached at all. */
 export class ApiError extends Error {
-  constructor(public status: number, public detail: unknown) {
-    super(typeof detail === "string" ? detail : `HTTP ${status}`);
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
   }
 }
 
+function detailMessage(detail: unknown, status: number): string {
+  if (typeof detail === "string") return detail;
+  if (detail && typeof detail === "object" && "error" in detail) return String((detail as { error: unknown }).error);
+  if (Array.isArray(detail)) return "The request was not valid.";
+  return `The server returned HTTP ${status}.`;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...init });
+  let res: Response;
+  try {
+    res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...init });
+  } catch {
+    throw new ApiError(0, "Cannot reach the API. Is the backend running on port 8000?");
+  }
   const body = await res.json().catch(() => null);
-  if (!res.ok) throw new ApiError(res.status, body?.detail ?? body);
+  if (!res.ok) throw new ApiError(res.status, detailMessage(body?.detail ?? body, res.status));
   return body as T;
 }
 
@@ -24,7 +41,7 @@ const qs = (params: Record<string, string | undefined>) => {
 
 export const api = {
   health: () => request<Health>("/api/health"),
-  config: () => request<{ roles: Role[]; approaches: { id: ApproachId; label: string }[]; launch_criteria: unknown }>("/api/config"),
+  config: () => request<AppConfig>("/api/config"),
   samples: () => request<{ case_id: string; question: string; role: string; category: string }[]>("/api/sample-questions"),
   ask: (question: string, role: string, approaches: ApproachId[]) =>
     request<{ mode: string; fixture: boolean; role: string; responses: ApproachResponse[] }>("/api/ask", {

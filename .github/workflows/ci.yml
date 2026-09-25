@@ -2,19 +2,41 @@ name: CI
 on:
   push:
   pull_request:
+
 jobs:
   backend:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # 3.10 is the documented minimum; 3.12 is the newest version exercised.
+        python-version: ["3.10", "3.12"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
+        with:
+          python-version: ${{ matrix.python-version }}
       - run: pip install -r backend/requirements-dev.txt
-      - run: cd backend && python -m pytest
+      - name: Lint and format check
+        working-directory: backend
+        run: ruff check app tests ../scripts && ruff format --check app tests ../scripts
+      - name: Tests
+        working-directory: backend
+        run: python -m pytest
+
   frontend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: "22" }
-      - run: cd frontend && npm ci && npx vitest run && npm run build
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - working-directory: frontend
+        run: npm ci
+      - name: Typecheck, lint and tests
+        working-directory: frontend
+        run: npm run check
+      - name: Production build
+        working-directory: frontend
+        run: npm run build

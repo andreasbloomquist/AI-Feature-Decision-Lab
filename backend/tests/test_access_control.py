@@ -1,4 +1,9 @@
 """Acceptance 1: an employee cannot retrieve or preview an HR-only document."""
+
+import json
+
+import pytest
+
 from app.access import can_access
 from app.citations import validate_citation
 from app.llm import ScriptedProvider
@@ -68,10 +73,11 @@ def test_basic_rag_redacts_restricted_citation_marker(make_approaches):
 
 def test_preview_endpoint_enforces_role(client):
     r = client.get("/api/documents/NS-HR-001", params={"role": "employee"})
-    assert r.status_code == 403
-    body = r.json()
+    missing = client.get("/api/documents/NS-XX-999", params={"role": "employee"})
+    # Restricted and nonexistent documents get the same response, so existence cannot be probed.
+    assert r.status_code == missing.status_code == 404
+    assert r.json() == missing.json()
     assert "Compensation" not in r.text and "182,000" not in r.text
-    assert body["detail"]["status"] == "access_denied"
     ok = client.get("/api/documents/NS-HR-001", params={"role": "hr"})
     assert ok.status_code == 200 and "182,000" in ok.text
 
@@ -86,3 +92,32 @@ def test_document_list_hides_restricted_titles(client):
 
 def test_unknown_role_rejected(client):
     assert client.get("/api/documents", params={"role": "ceo"}).status_code == 400
+
+
+def test_basic_rag_never_sends_restricted_id_to_the_browser(make_approaches):
+    llm = ScriptedProvider(lambda s, u: "Bands are in NS-HR-001, see [NS-HR-001#2] and [ns-hr-001#3].")
+    public = make_approaches(llm)["basic_rag"].run(HR_QUESTION, "employee").public_dict()
+    dumped = json.dumps(public).upper()
+    assert "NS-HR-001" not in dumped  # not in answer, citations, warnings or anywhere else
+    assert all(c["reason"] == "unavailable" for c in public["citations"])
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "Pay bands are in [ns-hr-001#2].",  # lower-case ID
+        "Pay bands are in [NS-HR-001 §2].",  # malformed marker
+        "Travel needs VP approval [NS-TRV-2026#3]. Pay bands are in NS-HR-001.",  # uncited mention
+    ],
+)
+def test_guarded_rag_withholds_any_reference_to_restricted_document(make_approaches, answer):
+    llm = ScriptedProvider(lambda s, u: f"STATUS: ANSWERED\nANSWER: {answer}")
+    resp = make_approaches(llm)["guarded_rag"].run("Who approves travel over $2,000?", "employee")
+    assert resp.status == "error" and resp.error.startswith("citation_validation_failed")
+    assert "NS-HR-001" not in json.dumps(resp.public_dict()).upper()
+
+
+def test_ask_endpoint_leaks_nothing_for_restricted_question(client):
+    body = client.post("/api/ask", json={"question": HR_QUESTION, "role": "employee"}).text
+    for secret in ("NS-HR-001", "182,000", "218,000", "Compensation Bands"):
+        assert secret not in body

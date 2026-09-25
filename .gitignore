@@ -7,5 +7,5 @@ frontend/dist/
 *.tsbuildinfo
 .env
 results/*.sqlite3
-results/*.sqlite3-journal
+results/*.sqlite3-*
 .DS_Store

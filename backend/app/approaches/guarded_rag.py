@@ -1,33 +1,54 @@
 """Approach 3: guarded RAG.
 
-Same authorized, active-only retrieval, plus:
+Same authorized, active-only retrieval as the other approaches, plus:
 - abstain without calling the model when retrieval evidence is below a floor;
 - a strict answer contract (answer only from passages, cite every claim, abstain otherwise);
-- post-generation validation: every cited passage must be in the retrieved, authorized, active set.
-  If validation fails the answer is withheld and the reason recorded. There is no second
-  unrestricted model call to "fix" an unsupported answer.
+- post-generation validation: every cited passage must be in the retrieved, authorized, active set,
+  markers must be well-formed, and the answer may not name a document the role cannot read.
+If validation fails the answer is withheld and the reason recorded. There is no second model
+call to "fix" an unsupported answer.
 """
+
 from __future__ import annotations
 
 import re
 import time
 
-from ..citations import BRACKET_RE, validate_all
-from ..llm import LLMError, fixture_key
-from ..pricing import estimate_cost_usd
-from ..prompts import load_prompt
-from ..schemas import ApproachResponse
-from .base import ABSTAIN_MESSAGE, Approach, format_passages
+from ..access import can_access
+from ..citations import (
+    RESTRICTED,
+    malformed_markers,
+    mentioned_document_ids,
+    parse_citation_markers,
+    validate_all,
+)
+from ..corpus import Corpus
+from ..schemas import ApproachResponse, Citation
+from .base import ABSTAIN_MESSAGE, Approach, elapsed_ms
 from .search import split_sentences
 
 FORMAT_RE = re.compile(r"STATUS:\s*(ANSWERED|ABSTAINED)\s*\n+\s*ANSWER:\s*(.*)", re.IGNORECASE | re.DOTALL)
+WITHHELD_MESSAGE = "This answer was withheld because it cited a source that failed validation."
 
 
 def parse_guarded_output(text: str) -> tuple[str, str] | None:
+    """(STATUS, answer) from the two-line contract, or None if the reply does not follow it."""
     m = FORMAT_RE.search(text or "")
-    if not m:
-        return None
-    return m.group(1).upper(), m.group(2).strip()
+    return (m.group(1).upper(), m.group(2).strip()) if m else None
+
+
+def validation_failures(answer: str, citations: list[Citation], corpus: Corpus, role: str) -> list[str]:
+    """Reasons to withhold an answer. A restricted document is reported only as a placeholder.
+
+    Naming an accessible document in prose is fine (the 2026 travel policy itself says it replaces
+    NS-TRV-2025), but naming a document the role may not read is a disclosure, however it is written.
+    """
+    failures = [f"{c.document_id} ({c.reason})" for c in citations if not c.valid]
+    failures += ["malformed citation"] * len(malformed_markers(answer))
+    restricted_mentions = {d for d in mentioned_document_ids(answer, corpus) if not can_access(role, corpus.get(d))}
+    if restricted_mentions and not any(c.reason == "unauthorized" for c in citations):
+        failures.append(f"{RESTRICTED} (named in the answer)")
+    return failures
 
 
 class GuardedRAG(Approach):
@@ -35,43 +56,24 @@ class GuardedRAG(Approach):
 
     def run(self, question: str, role: str) -> ApproachResponse:
         start = time.perf_counter()
-        prompt = load_prompt(self.config["prompt_file"])
         hits = self.retrieve(question, role)
-        resp = self.base_response(hits, start)
-        resp.prompt_version = prompt.version
-        llm = self.ctx.llm
-        resp.model = llm.model if llm else None
-        resp.fixture = bool(llm and llm.is_fixture)
+        resp = self.new_response(hits)
 
         floor = self.config.get("retrieval_floor", 0)
         top = hits[0].score if hits else 0.0
         if top < floor:
-            # Known zero cost: no model call was made.
+            # No model call: zero tokens and zero cost are known, and latency is real.
             resp.status = "abstained"
             resp.answer = ABSTAIN_MESSAGE
             resp.guard_reason = f"retrieval_below_floor: best score {top:.2f} < {floor}"
             resp.input_tokens = resp.output_tokens = 0
             resp.estimated_cost_usd = 0.0
-            resp.fixture = False
-            resp.latency_ms = round((time.perf_counter() - start) * 1000, 1)
+            resp.latency_ms = elapsed_ms(start)
             return resp
 
-        system, user = prompt.render(passages=format_passages(self.ctx.corpus, hits), question=question, role=role)
-        try:
-            result = llm.generate(
-                system, user, max_tokens=self.config["generation"]["max_tokens"],
-                fixture_key=fixture_key(self.name, question, role),
-            )
-        except LLMError as e:
-            resp.status = "error"
-            resp.error = f"{e.kind}: {e.message}"
-            resp.latency_ms = e.latency_ms
+        result = self.generate(resp, hits, question, role, start)
+        if result is None:
             return resp
-
-        resp.raw_output = result.text
-        resp.latency_ms = result.latency_ms
-        resp.input_tokens, resp.output_tokens = result.input_tokens, result.output_tokens
-        resp.estimated_cost_usd = estimate_cost_usd(result.model, result.input_tokens, result.output_tokens)
 
         parsed = parse_guarded_output(result.text)
         if parsed is None:
@@ -80,26 +82,27 @@ class GuardedRAG(Approach):
             return resp
         status, answer = parsed
         if status == "ABSTAINED":
+            # Show the standard message; the model's own wording stays in raw_output for reviewers.
             resp.status = "abstained"
             resp.guard_reason = "model_abstained"
-            # Show the standard message; the model's own wording is kept in raw_output for reviewers.
             resp.answer = ABSTAIN_MESSAGE
             return resp
+        return self._validate(resp, answer, {h.passage.passage_id for h in hits}, role)
 
-        context_ids = {h.passage.passage_id for h in hits}
-        citations = validate_all(self.ctx.corpus, role, answer, context_ids)
-        vcfg = self.config.get("validation", {})
-        invalid = [c for c in citations if not c.valid]
-        if invalid and vcfg.get("reject_invalid_citations", True):
+    def _validate(self, resp: ApproachResponse, answer: str, context_ids: set[str], role: str) -> ApproachResponse:
+        corpus = self.ctx.corpus
+        rules = self.config.get("validation", {})
+        citations = validate_all(corpus, role, answer, context_ids)
+
+        failures = validation_failures(answer, citations, corpus, role)
+        if failures and rules.get("reject_invalid_citations", True):
             resp.status = "error"
-            resp.citations = []  # never surface invalid citations as sources
-            resp.answer = "This answer was withheld because it cited a source that failed validation."
-            resp.error = "citation_validation_failed: " + ", ".join(
-                f"{'[restricted]' if c.reason == 'unauthorized' else c.document_id} ({c.reason})" for c in invalid
-            )
+            resp.answer = WITHHELD_MESSAGE
+            resp.citations = []  # never surface a failed source
+            resp.error = "citation_validation_failed: " + ", ".join(failures)
             resp.guard_reason = "citation_validation_failed"
             return resp
-        if not citations and vcfg.get("require_citations", True):
+        if not citations and rules.get("require_citations", True):
             resp.status = "abstained"
             resp.answer = ABSTAIN_MESSAGE
             resp.guard_reason = "no_citations: the model answered without citing a passage"
@@ -108,11 +111,8 @@ class GuardedRAG(Approach):
         resp.status = "answered"
         resp.citations = citations
         resp.answer = answer
-        min_words = vcfg.get("uncited_sentence_min_words", 8)
-        uncited = [
-            s for s in split_sentences(answer)
-            if len(s.split()) >= min_words and not BRACKET_RE.search(s)
-        ]
+        min_words = rules.get("uncited_sentence_min_words", 8)
+        uncited = [s for s in split_sentences(answer) if len(s.split()) >= min_words and not parse_citation_markers(s)]
         if uncited:
             resp.warnings.append(f"{len(uncited)} sentence(s) without a citation")
         return resp

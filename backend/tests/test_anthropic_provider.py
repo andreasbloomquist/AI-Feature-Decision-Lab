@@ -1,4 +1,5 @@
 """The real provider adapter, exercised against a local fake Messages endpoint (no network, no key)."""
+
 import json
 import threading
 import time
@@ -23,14 +24,27 @@ class FakeMessages(BaseHTTPRequestHandler):
         if "SLOW" in user:
             time.sleep(1.5)
         if "NOUSAGE" in user:
-            payload = {"id": "msg_2", "type": "message", "role": "assistant", "model": body["model"],
-                       "content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn", "stop_sequence": None,
-                       "usage": {"input_tokens": 10, "output_tokens": 2}}
+            payload = {
+                "id": "msg_2",
+                "type": "message",
+                "role": "assistant",
+                "model": body["model"],
+                "content": [{"type": "text", "text": "ok"}],
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {"input_tokens": 10, "output_tokens": 2},
+            }
         else:
-            payload = {"id": "msg_1", "type": "message", "role": "assistant", "model": body["model"],
-                       "content": [{"type": "text", "text": "STATUS: ANSWERED\nANSWER: hi [NS-TRV-2026#3]"}],
-                       "stop_reason": "end_turn", "stop_sequence": None,
-                       "usage": {"input_tokens": 1200, "output_tokens": 150}}
+            payload = {
+                "id": "msg_1",
+                "type": "message",
+                "role": "assistant",
+                "model": body["model"],
+                "content": [{"type": "text", "text": "STATUS: ANSWERED\nANSWER: hi [NS-TRV-2026#3]"}],
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {"input_tokens": 1200, "output_tokens": 150},
+            }
         data = json.dumps(payload).encode()
         try:
             self.send_response(200)
@@ -60,7 +74,7 @@ def test_provider_records_usage_and_sends_config(fake_api):
     r = p.generate("sys", "question", max_tokens=500)
     assert r.text.startswith("STATUS: ANSWERED")
     assert (r.input_tokens, r.output_tokens) == (1200, 150)
-    assert r.latency_ms is not None and r.measured
+    assert r.latency_ms is not None
     body = REQUESTS[0]["body"]
     assert body["model"] == "claude-opus-5" and body["system"] == "sys" and body["max_tokens"] == 500
     assert body["output_config"] == {"effort": "low"}

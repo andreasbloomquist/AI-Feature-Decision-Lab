@@ -5,13 +5,15 @@
                      are illustrative, carry no latency or token usage, and are always labeled.
 - ScriptedProvider:  test double.
 """
+
 from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Protocol
 
 from .settings import DATA_DIR, Settings
 
@@ -26,7 +28,6 @@ class LLMResult:
     output_tokens: int | None
     latency_ms: float | None
     stop_reason: str | None = None
-    measured: bool = True  # False for fixture replays
 
 
 class LLMError(Exception):
@@ -96,8 +97,10 @@ class AnthropicProvider:
         usage = getattr(resp, "usage", None)
         in_tok = out_tok = None
         if usage is not None and usage.input_tokens is not None and usage.output_tokens is not None:
-            in_tok = usage.input_tokens + (getattr(usage, "cache_creation_input_tokens", 0) or 0) + (
-                getattr(usage, "cache_read_input_tokens", 0) or 0
+            in_tok = (
+                usage.input_tokens
+                + (getattr(usage, "cache_creation_input_tokens", 0) or 0)
+                + (getattr(usage, "cache_read_input_tokens", 0) or 0)
             )
             out_tok = usage.output_tokens
         return LLMResult(text, self.model, in_tok, out_tok, latency, resp.stop_reason)
@@ -126,7 +129,7 @@ class FixtureProvider:
         if entry.get("error"):
             raise LLMError(entry["error"], entry.get("message", "simulated failure (fixture)"))
         # No latency or token usage: fixture outputs were not measured.
-        return LLMResult(entry["text"], self.model, None, None, None, "fixture", measured=False)
+        return LLMResult(entry["text"], self.model, None, None, None, "fixture")
 
 
 class ScriptedProvider:
@@ -134,7 +137,12 @@ class ScriptedProvider:
 
     is_fixture = False
 
-    def __init__(self, script: Callable[[str, str], object], model: str = "claude-opus-5", usage: tuple[int, int] | None = (1000, 100)):
+    def __init__(
+        self,
+        script: Callable[[str, str], object],
+        model: str = "claude-opus-5",
+        usage: tuple[int, int] | None = (1000, 100),
+    ):
         self.name = "scripted"
         self.model = model
         self.script = script

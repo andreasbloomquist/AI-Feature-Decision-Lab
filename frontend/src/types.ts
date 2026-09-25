@@ -65,14 +65,17 @@ export interface Metrics {
   abstention_quality: Rate;
   access_denied_handling: Rate;
   access_safety: { disclosures: number; cases_with_disclosure: string[]; n_cases: number };
-  latency: { n: number; n_unmeasured: number; p50_ms: number | null; p95_ms: number | null };
+  latency: { n: number; n_unmeasured: number; coverage: number; p50_ms: number | null; p95_ms: number | null };
   cost: {
-    available: boolean;
+    /** True when every case has token usage. */
+    complete: boolean;
     n_with_usage: number;
     n_missing: number;
+    /** Share of cases with known cost (0–1). */
+    coverage: number;
     total_usd: number | null;
+    /** Average over the cases whose cost is known; null when none are. */
     per_question_usd: number | null;
-    per_question_known_usd: number | null;
   };
   tokens: { input_total: number | null; output_total: number | null; n_with_usage: number };
   errors: { count: number; n: number; case_ids: string[] };
@@ -118,6 +121,8 @@ export interface CaseRow {
   deterministic_label: string | null;
   judge_verdict: string | null;
   reviewed: boolean;
+  /** Backend verdict: correct (answerable) or declined safely (otherwise). */
+  succeeded: boolean;
   disclosures: number;
   latency_ms: number | null;
   fixture: boolean;
@@ -184,6 +189,7 @@ export interface CaseResponseRow {
   reviews: Review[];
   final_label: string | null;
   final_label_source: string;
+  succeeded: boolean;
   retrieved_documents: { document_id: string; title: string | null; status: string | null }[];
 }
 
@@ -218,7 +224,9 @@ export interface Decision {
   n_cases: number;
   criteria_version: string;
   criteria_hash: string;
+  criteria_changed_since_run: boolean;
   criteria_registered_on: string;
+  correctness_source: string | null;
   target_approach: ApproachId;
   recommendation: { verdict: string; headline: string; summary: string };
   approaches: Partial<Record<ApproachId, { label: string; criteria: Criterion[]; passes: number; total: number }>>;
@@ -253,4 +261,35 @@ export interface DocumentDetail {
   access_groups: string[];
   country: string[];
   passages: { passage_id: string; heading: string; text: string }[];
+}
+
+export interface CriterionConfig {
+  id: string;
+  label: string;
+  metric: string;
+  comparator: "<=" | ">=";
+  threshold: number;
+  unit: Criterion["unit"];
+}
+
+export interface LaunchCriteria {
+  version: string;
+  registered_on: string;
+  evaluated_split: string;
+  target_approach: ApproachId;
+  baseline_approach: ApproachId;
+  min_sample_size: number;
+  min_measurement_coverage: number;
+  correctness_source: string;
+  criteria: CriterionConfig[];
+  hash: string;
+}
+
+export interface AppConfig {
+  settings: Health;
+  roles: Role[];
+  approaches: { id: ApproachId; label: string }[];
+  launch_criteria: LaunchCriteria;
+  corpus_version: string;
+  dataset_version: string;
 }
