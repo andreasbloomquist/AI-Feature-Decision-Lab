@@ -1,5 +1,7 @@
 # Architecture
 
+Why each tool, library and design choice was made, and which alternatives were rejected, is recorded in [decisions.md](decisions.md).
+
 ```mermaid
 flowchart LR
   subgraph Data["Data (versioned in git)"]

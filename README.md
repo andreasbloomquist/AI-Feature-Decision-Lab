@@ -61,7 +61,7 @@ The model is set in `.env`: `LLM_MODEL` defaults to `claude-opus-5` at `LLM_EFFO
 | [`config/`](config) | Versioned prompts, per-approach settings, pricing, launch criteria |
 | [`backend/app/`](backend/app) | FastAPI server, retrieval, approaches, grading, evaluation runner, decision logic |
 | [`frontend/src/`](frontend/src) | React + TypeScript UI: Ask, Compare, Inspect, Decision |
-| [`docs/`](docs) | [PRD](docs/PRD.md) · [Architecture](docs/architecture.md) · [Evaluation report](docs/evaluation_report.md) · [Decision memo](docs/decision_memo.md) · [Demo script](docs/demo_script.md) |
+| [`docs/`](docs) | [PRD](docs/PRD.md) · [Architecture](docs/architecture.md) · [Technical decisions](docs/decisions.md) · [Evaluation report](docs/evaluation_report.md) · [Decision memo](docs/decision_memo.md) · [Demo script](docs/demo_script.md) |
 
 ## How it's measured
 
