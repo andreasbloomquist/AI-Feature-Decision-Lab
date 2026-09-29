@@ -84,8 +84,8 @@ Done four days after the first, by two independent reviewers (backend; frontend)
 
 | | Before | After |
 |---|---|---|
-| Backend tests | 97 | 134 |
-| Frontend tests | 20 | 27 |
+| Backend tests | 97 | 138 |
+| Frontend tests | 20 | 29 |
 | React hooks lint rules | 2 | the full recommended set |
 
 ### Decision integrity
@@ -116,6 +116,12 @@ Done four days after the first, by two independent reviewers (backend; frontend)
 | 38 | Medium | A stale run link was a dead end on the Decision view; a crafted run ID (`..%2Fdecision`) fetched another endpoint and blanked the app. | The run picker and a "use the latest run" link stay on error; path segments are encoded; an error boundary catches render errors per route. | `keeps the run picker and a way back to the latest run`, `shows a message instead of a blank page when a view throws` |
 | 39 | Medium | Rounding contradicted verdicts: a 79.5% lower bound showed as "80%", and a failing $0.02004 showed as "$0.020". | Intervals to one decimal; extra precision when a failing value rounds to its threshold; a measured cost is never shown as $0. | `never shows a measured, nonzero cost as zero` |
 | 40 | Low | Unknown role in a deep link displayed "Employee" but sent the bogus role; "No live evaluation yet" shown when the run list failed to load; hardcoded "Versus search"; the source drawer stayed open across navigation; unnamed citation chips and an incomplete tabs pattern. | Each fixed at the source. | `sends the role it shows, falling back to Employee` |
+
+### Label integrity (from the product review)
+
+| # | Severity | Finding | Fix | Regression test |
+|---|---|---|---|---|
+| 42 | High | **Human reviews could silently move a verdict.** Reviews override the automated label in every metric, but nothing showed that they had; the form defaulted to "Correct" and the reviewer name was optional. Two anonymous clicks moved held-out correctness from 32/35 to 34/35. | The Decision view and the memo say how many of the target's correctness labels come from human review. A review needs an explicit verdict and a reviewer name (the API rejects a missing or blank one). | `test_decision_and_memo_disclose_human_overrides`, `test_review_requires_a_reviewer`, `says when the verdict rests on human-reviewed labels`, `needs an explicit verdict and a reviewer name` (frontend) |
 
 ### Configuration
 

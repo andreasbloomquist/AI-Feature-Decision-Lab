@@ -324,7 +324,8 @@ function ReviewBox({
   canReview: boolean;
   onReviewed: () => void;
 }) {
-  const [verdict, setVerdict] = useState("correct");
+  // No default verdict: a review overrides the automated label, so it has to be a deliberate choice.
+  const [verdict, setVerdict] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [reviewer, setReviewer] = useState("");
   const [saving, setSaving] = useState(false);
@@ -334,8 +335,9 @@ function ReviewBox({
     setSaving(true);
     setError(null);
     try {
-      await api.review(responseId, verdict, note, reviewer);
+      await api.review(responseId, verdict!, note, reviewer.trim());
       setNote("");
+      setVerdict(null);
       onReviewed();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -373,8 +375,8 @@ function ReviewBox({
         </div>
         <textarea aria-label="Review note" placeholder="Note (what is right or wrong, and why)" value={note} onChange={(e) => setNote(e.target.value)} rows={2} />
         <div className="review-actions">
-          <input aria-label="Reviewer name" placeholder="Your name (optional)" value={reviewer} onChange={(e) => setReviewer(e.target.value)} />
-          <button className="btn" onClick={save} disabled={saving}>
+          <input aria-label="Reviewer name" placeholder="Your name (required)" required value={reviewer} onChange={(e) => setReviewer(e.target.value)} />
+          <button className="btn" onClick={save} disabled={saving || !verdict || !reviewer.trim()}>
             {saving ? "Saving…" : "Save review"}
           </button>
         </div>

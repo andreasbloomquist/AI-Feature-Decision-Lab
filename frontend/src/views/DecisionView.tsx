@@ -4,7 +4,7 @@ import { ErrorNotice, Loading } from "../components/Notice";
 import { StateBadge } from "../components/StatusBadge";
 import { APPROACHES, APPROACH_LABELS, msText, pct, usdText } from "../format";
 import { href, navigate } from "../router";
-import type { Criterion } from "../types";
+import type { Criterion, DecisionResponse } from "../types";
 import { useAsync } from "../useAsync";
 import { RunPicker, useRuns } from "./RunPicker";
 
@@ -31,6 +31,14 @@ function measured(c: Criterion): string {
   if (c.unit === "rate" && c.numerator !== undefined) return `${base} (${c.numerator}/${c.n})`;
   if (c.n !== null) return `${base} (n=${c.n})`;
   return base;
+}
+
+/** Says when the target's correctness rests partly on human reviews, which override the automated grade. */
+function humanOverrides(d: NonNullable<DecisionResponse["decision"]>): string | null {
+  const sources = d.approaches[d.target_approach]?.label_sources;
+  if (!sources?.human) return null;
+  const total = sources.human + sources.model_judge + sources.deterministic;
+  return `${sources.human} of ${total} correctness labels for ${APPROACH_LABELS[d.target_approach]} come from human review, overriding the automated grade. Check those reviews in Inspect before relying on this verdict.`;
 }
 
 export function DecisionView({ runParam }: { runParam: string | null }) {
@@ -120,6 +128,12 @@ export function DecisionView({ runParam }: { runParam: string | null }) {
               </p>
             )}
           </section>
+
+          {humanOverrides(d) && (
+            <div className="notice notice-warn" role="note">
+              <strong>Human overrides.</strong> {humanOverrides(d)}
+            </div>
+          )}
 
           <section className="panel">
             <div className="section-head">

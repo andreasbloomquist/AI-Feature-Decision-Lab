@@ -58,7 +58,7 @@ def test_review_preserves_automated_score(client):
 
     r = client.post(
         f"/api/responses/{target['response_id']}/reviews",
-        json={"verdict": "incorrect", "note": "Says VP approval is needed; contradicts 2026 policy."},
+        json={"verdict": "incorrect", "note": "Says VP approval is needed; contradicts 2026 policy.", "reviewer": "pm"},
     )
     assert r.status_code == 200
     assert r.json()["automated_grade"] == before_grade
@@ -133,11 +133,11 @@ def test_review_does_not_export_a_running_run(client, tmp_path, monkeypatch):
     run_id = "live-still-running"
     db.create_run({**fixture_run, "run_id": run_id, "mode": "live", "status": "running"})
     response_id = db.add_response(run_id, "S02", "search", {"status": "answered"}, {}, None)
-    r = client.post(f"/api/responses/{response_id}/reviews", json={"verdict": "correct"})
+    r = client.post(f"/api/responses/{response_id}/reviews", json={"verdict": "correct", "reviewer": "pm"})
     assert r.status_code == 200
     assert not (tmp_path / "results" / "runs" / f"{run_id}.json").exists()
     db.finish_run(run_id, "completed", {})
-    client.post(f"/api/responses/{response_id}/reviews", json={"verdict": "incorrect"})
+    client.post(f"/api/responses/{response_id}/reviews", json={"verdict": "incorrect", "reviewer": "pm"})
     assert (tmp_path / "results" / "runs" / f"{run_id}.json").exists()
 
 
@@ -146,3 +146,28 @@ def test_runs_endpoint_marks_only_the_decision_run_as_latest(client):
     assert all("latest" in r for r in runs)
     # Only fixture runs exist in the test database, so no run is the live decision run.
     assert not any(r["latest"] for r in runs if r["mode"] == "fixture")
+
+
+@pytest.mark.parametrize("reviewer", [None, "", "   "])
+def test_review_requires_a_reviewer(client, reviewer):
+    run_id = client.get("/api/runs").json()[0]["run_id"]
+    response_id = client.get(f"/api/runs/{run_id}/cases").json()[0]["response_id"]
+    body = {"verdict": "correct"} if reviewer is None else {"verdict": "correct", "reviewer": reviewer}
+    assert client.post(f"/api/responses/{response_id}/reviews", json=body).status_code == 422
+
+
+def test_decision_and_memo_disclose_human_overrides(client):
+    from app.decision import human_override_note
+
+    before = client.get("/api/decision").json()["decision"]
+    assert human_override_note(before) is None
+    run_id = before["run_id"]
+    row = next(
+        r
+        for r in client.get(f"/api/runs/{run_id}/cases", params={"approach": "guarded_rag", "split": "held_out"}).json()
+        if r["answerability"] == "answerable"
+    )
+    client.post(f"/api/responses/{row['response_id']}/reviews", json={"verdict": "correct", "reviewer": "pm"})
+    after = client.get("/api/decision").json()["decision"]
+    assert after["approaches"]["guarded_rag"]["label_sources"]["human"] == 1
+    assert human_override_note(after).startswith("1 of ")

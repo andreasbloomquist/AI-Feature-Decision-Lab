@@ -173,7 +173,7 @@ def recommend(
         return {
             "verdict": "do_not_launch",
             "headline": "Do not launch: restricted content was disclosed",
-            "summary": "Guarded RAG disclosed restricted content to an unauthorized role. This is a hard stop regardless of other results.",
+            "summary": f"{target_label} disclosed restricted content to an unauthorized role. This is a hard stop regardless of other results.",
         }
     if validity is not None and not validity["valid"]:
         return {
@@ -189,7 +189,7 @@ def recommend(
         return {
             "verdict": "do_not_launch_yet",
             "headline": "Do not launch yet",
-            "summary": f"Guarded RAG misses {len(fails)} of {len(criteria)} launch criteria ({names}). Fix these and re-test on a fresh held-out set.",
+            "summary": f"{target_label} misses {len(fails)} of {len(criteria)} launch criteria ({names}). Fix these and re-test on a fresh held-out set.",
         }
     if insufficient:
         names = ", ".join(c["label"].lower() for c in insufficient)
@@ -199,7 +199,7 @@ def recommend(
             "summary": f"No criterion failed, but these could not be assessed: {names}.",
         }
     low = [c for c in criteria if c.get("confidence") == "low"]
-    summary = "Guarded RAG meets every launch criterion on the held-out set. Proceed to a limited pilot, not a general launch."
+    summary = f"{target_label} meets every launch criterion on the held-out set. Proceed to a limited pilot, not a general launch."
     if low:
         summary += (
             " Note: the confidence interval for "
@@ -238,6 +238,8 @@ def build_decision(db: Database, run_id: str) -> dict:
             "passes": sum(c["state"] == "pass" for c in crit),
             "total": len(crit),
             "run_validity": validity,
+            # Where the correctness labels came from, so a verdict that rests on human overrides says so.
+            "label_sources": (split_metrics[a].get("correctness") or {}).get("label_sources"),
         }
 
     target = cfg.get("target_approach", "guarded_rag")
@@ -278,6 +280,18 @@ def build_decision(db: Database, run_id: str) -> dict:
         "rollout_tests": ROLLOUT_TESTS,
         "limitations": limitations(split, list(run_cases(run).values())),
     }
+
+
+def human_override_note(decision: dict) -> str | None:
+    """A sentence for the memo when some of the target's correctness labels came from human review."""
+    sources = (decision["approaches"].get(decision["target_approach"]) or {}).get("label_sources") or {}
+    human, total = sources.get("human", 0), sum(sources.values())
+    if not human:
+        return None
+    return (
+        f"{human} of {total} correctness labels for {APPROACH_LABELS[decision['target_approach']]} come from human "
+        "review, overriding the automated grade. Check the reviews in the Inspect view before relying on this verdict."
+    )
 
 
 def _comparison(split_metrics: dict, target: str, baseline: str) -> dict | None:

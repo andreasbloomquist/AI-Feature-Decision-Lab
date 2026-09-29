@@ -38,7 +38,7 @@ AI features are also non-deterministic. The same question can get a different an
 | **Compare options** | One prototype, judged on its own | Three approaches on the same 45 held-out questions, with the lift over search and the extra cost |
 | **Understand failure** | Anecdotes from the demo | Every failed case can be filtered by category, opened, and reviewed. Failures are grouped into types such as "invented answer" or "used a superseded policy" |
 | **Talk about risk honestly** | "It's about 90% accurate" | "32 of 35, interval 78–97%, on synthetic questions": every rate shows its sample size and uncertainty |
-| **Bring in judgement** | Engineers grade their own output | A PM or policy owner can override any grade in the Inspect view; the automated scores are kept alongside |
+| **Bring in judgement** | Engineers grade their own output | A PM or policy owner can override any grade in the Inspect view, with their name on it. The automated scores are kept alongside, and the Decision view says how many labels were overridden |
 | **Communicate the decision** | A slide with a screenshot | A generated [decision memo](docs/decision_memo.md) with the proposed action, evidence, failure modes, limits and the next experiment |
 | **Decide again later** | Start over | Change a prompt, model or setting, run `make eval`, and compare the new run with the old one |
 
@@ -218,7 +218,7 @@ All settings live in `.env` (see [`.env.example`](.env.example)):
 
 ## Use it for your own feature
 
-The Northstar example is data and config, not code. To evaluate a different retrieval-style assistant, such as support articles, internal docs or product help, replace these files:
+The Northstar example is mostly data and config. To evaluate a different retrieval-style assistant, such as support articles, internal docs or product help, replace these files. Only the roles need a small Python edit:
 
 | What | Where | Notes |
 |---|---|---|
@@ -230,6 +230,8 @@ The Northstar example is data and config, not code. To evaluate a different retr
 | Prices | `config/pricing.yaml` | Needed for cost estimates |
 
 Then run `make eval-dev` while tuning, and `make eval` once for the decision. [docs/for_product_managers.md](docs/for_product_managers.md) covers how to write the questions and criteria.
+
+What's missing to make this easier (CSV import, plugging in your team's own system over HTTP, a run-to-run diff) is prioritized in the [product review and roadmap](docs/product_review.md).
 
 ## How it's measured
 

@@ -263,7 +263,8 @@ def case_detail(run_id: str, case_id: str, db: DbDep) -> dict:
 class ReviewRequest(BaseModel):
     verdict: Literal["correct", "partially_correct", "incorrect"]
     note: str | None = Field(default=None, max_length=2000)
-    reviewer: str | None = Field(default=None, max_length=100)
+    # A human review overrides the automated label in every metric, so it must say who made it.
+    reviewer: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
 
 
 @app.post("/api/responses/{response_id}/reviews")

@@ -241,7 +241,19 @@ export interface Decision {
   correctness_source: string | null;
   target_approach: ApproachId;
   recommendation: { verdict: string; headline: string; summary: string };
-  approaches: Partial<Record<ApproachId, { label: string; criteria: Criterion[]; passes: number; total: number }>>;
+  approaches: Partial<
+    Record<
+      ApproachId,
+      {
+        label: string;
+        criteria: Criterion[];
+        passes: number;
+        total: number;
+        /** Where the correctness labels came from; human labels override the automated grade. */
+        label_sources?: { human: number; model_judge: number; deterministic: number } | null;
+      }
+    >
+  >;
   comparison: {
     target: ApproachId;
     baseline: ApproachId;

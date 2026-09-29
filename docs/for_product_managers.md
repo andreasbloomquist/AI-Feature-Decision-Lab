@@ -86,12 +86,12 @@ Run `make eval` (or have an engineer run it) and open the app.
 **Compare** is the scorecard for the held-out set. Read it like this:
 - Every percentage has its count, for example 32/35. With 6 unanswerable questions, one case moves the rate by 17 points, so the count matters more than the percentage.
 - Hover over a rate for its 95% interval. If the interval crosses a threshold, you don't know which side you're on yet.
-- The *By category* table shows *where* an approach is weak. Search typically fails multi-document questions; basic RAG tends to invent answers to unanswerable ones.
+- To see *where* an approach is weak, filter Inspect by category, or read the *By category* table in the generated [evaluation report](evaluation_report.md). Search typically fails multi-document questions; basic RAG tends to invent answers to unanswerable ones.
 - The quality-versus-cost chart shows the trade-off at a glance. An approach without measured cost isn't plotted, rather than being plotted at $0.
 
 **Inspect** is where you spend the most time. Filter by category, approach and outcome, open a case, and read the question, the reference answer, each approach's answer, the grading, and the raw model output. Use it to:
 - **Check the grader.** Open a sample of passes as well as failures. Case O02 shows why: a wrong answer that mentions "manager" passes the deterministic fact check.
-- **Add a human review.** Mark a response correct, partially correct or incorrect with a note. Your verdict overrides the automated ones everywhere, and they're kept alongside.
+- **Add a human review.** Choose correct, partially correct or incorrect, add a note, and give your name (required). Your verdict overrides the automated ones everywhere, and they're kept alongside. Overrides are never silent: the Decision view and the memo say how many labels came from human review, so a reviewer can't quietly move a verdict.
 - **Find the story.** "It invents a phone stipend from the internet stipend" is more persuasive in a review than "abstention quality 50%".
 
 **Decision** applies the criteria stored with the run and proposes an action:
