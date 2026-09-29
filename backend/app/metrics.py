@@ -45,6 +45,10 @@ def compute_metrics(rows: list[dict]) -> dict:
     correct = sum(1 for lab, _ in labels if lab == "correct")
     partial = sum(1 for lab, _ in labels if lab == "partially_correct")
     sources = {src: sum(1 for _, s in labels if s == src) for src in ("human", "model_judge", "deterministic")}
+    # A review that agrees with the automated label confirms it; only a different verdict changes a metric.
+    automated = [final_label(r["grade"], r.get("judge"), None)[0] for r in answerable]
+    reviewed = [(lab, auto) for (lab, src), auto in zip(labels, automated, strict=True) if src == "human"]
+    human_reviews = {"reviewed": len(reviewed), "changed": sum(1 for lab, auto in reviewed if lab != auto)}
     det_correct = sum(1 for r in answerable if r["grade"]["deterministic_label"] == "correct")
 
     answered = [r for r in rows if r["response"]["status"] == "answered"]
@@ -91,7 +95,9 @@ def compute_metrics(rows: list[dict]) -> dict:
 
     return {
         "n_cases": len(rows),
-        "correctness": rate(correct, len(answerable), partial=partial, label_sources=sources),
+        "correctness": rate(
+            correct, len(answerable), partial=partial, label_sources=sources, human_reviews=human_reviews
+        ),
         "correctness_deterministic": rate(det_correct, len(answerable)),
         "citation_validity": rate(valid_cites, len(answered), judge_support_used=judge_support_used),
         "abstention_quality": rate(abst_ok, len(unanswerable)),

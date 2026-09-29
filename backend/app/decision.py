@@ -240,6 +240,7 @@ def build_decision(db: Database, run_id: str) -> dict:
             "run_validity": validity,
             # Where the correctness labels came from, so a verdict that rests on human overrides says so.
             "label_sources": (split_metrics[a].get("correctness") or {}).get("label_sources"),
+            "human_reviews": (split_metrics[a].get("correctness") or {}).get("human_reviews"),
         }
 
     target = cfg.get("target_approach", "guarded_rag")
@@ -283,15 +284,28 @@ def build_decision(db: Database, run_id: str) -> dict:
 
 
 def human_override_note(decision: dict) -> str | None:
-    """A sentence for the memo when some of the target's correctness labels came from human review."""
-    sources = (decision["approaches"].get(decision["target_approach"]) or {}).get("label_sources") or {}
-    human, total = sources.get("human", 0), sum(sources.values())
-    if not human:
+    """A sentence for the memo when human reviews changed correctness labels of the target or the baseline.
+
+    Both matter: the verdict uses the target's labels and the lift over the baseline uses both. A review
+    that agrees with the automated label is a confirmation, not an override, and is counted separately.
+    """
+    parts, confirmed = [], 0
+    approaches = [decision["target_approach"]]
+    if decision.get("comparison"):
+        approaches.append(decision["comparison"]["baseline"])
+    for a in dict.fromkeys(approaches):
+        entry = decision["approaches"].get(a) or {}
+        reviews = entry.get("human_reviews") or {}
+        total = sum((entry.get("label_sources") or {}).values())
+        confirmed += reviews.get("reviewed", 0) - reviews.get("changed", 0)
+        if reviews.get("changed"):
+            parts.append(f"{reviews['changed']} of {total} for {APPROACH_LABELS[a]}")
+    if not parts:
         return None
-    return (
-        f"{human} of {total} correctness labels for {APPROACH_LABELS[decision['target_approach']]} come from human "
-        "review, overriding the automated grade. Check the reviews in the Inspect view before relying on this verdict."
-    )
+    note = f"Human review changed correctness labels: {'; '.join(parts)}."
+    if confirmed:
+        note += f" {confirmed} more review(s) confirmed the automated label."
+    return note + " Check those reviews in the Inspect view before relying on this verdict or the comparison."
 
 
 def _comparison(split_metrics: dict, target: str, baseline: str) -> dict | None:

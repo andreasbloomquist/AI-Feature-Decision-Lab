@@ -251,6 +251,8 @@ export interface Decision {
         total: number;
         /** Where the correctness labels came from; human labels override the automated grade. */
         label_sources?: { human: number; model_judge: number; deterministic: number } | null;
+        /** Human reviews of correctness labels; `changed` counts those that differ from the automated label. */
+        human_reviews?: { reviewed: number; changed: number } | null;
       }
     >
   >;

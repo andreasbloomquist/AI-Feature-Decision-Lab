@@ -85,16 +85,28 @@ def run_validity(metrics: dict | None, cfg: dict) -> dict:
     }
 
 
+# Usability of a completed run, by (database file, run id, split). Whether a run is usable depends only on
+# its stored criteria and its provider errors, and neither changes after the run completes (human reviews
+# change labels, never errors), so the answer is computed once instead of on every /api/runs request.
+_USABLE_CACHE: dict[tuple[str, str, str], bool] = {}
+
+
 def _is_usable_live_run(db: Database, run: dict, split: str) -> bool:
     """A full live run that covers `split`, includes the target approach and is not dominated by errors."""
     if run["mode"] != "live" or not run["status"].startswith("completed") or run.get("partial"):
         return False
     if split not in run["splits"]:
         return False
-    cfg = ((db.get_run(run["run_id"]) or {}).get("config_snapshot") or {}).get("launch_criteria") or {}
-    split_metrics = summarize_run(db, run["run_id"]).get(split, {})
-    target = cfg.get("target_approach", "guarded_rag")
-    return target in split_metrics and run_validity(split_metrics[target], cfg)["valid"]
+    key = (str(db.path), run["run_id"], split)
+    if key not in _USABLE_CACHE:
+        full = db.get_run(run["run_id"]) or {}
+        cfg = (full.get("config_snapshot") or {}).get("launch_criteria") or {}
+        target = cfg.get("target_approach", "guarded_rag")
+        cases = run_cases(full)
+        rows = [r for r in db.responses_for_run(run["run_id"]) if r["approach"] == target]
+        rows = [{**r, "case": cases[r["case_id"]]} for r in rows if cases[r["case_id"]]["split"] == split]
+        _USABLE_CACHE[key] = bool(rows) and run_validity(compute_metrics(rows), cfg)["valid"]
+    return _USABLE_CACHE[key]
 
 
 def latest_runs(db: Database, split: str = "held_out") -> tuple[dict | None, dict | None]:

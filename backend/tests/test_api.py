@@ -162,12 +162,26 @@ def test_decision_and_memo_disclose_human_overrides(client):
     before = client.get("/api/decision").json()["decision"]
     assert human_override_note(before) is None
     run_id = before["run_id"]
-    row = next(
-        r
-        for r in client.get(f"/api/runs/{run_id}/cases", params={"approach": "guarded_rag", "split": "held_out"}).json()
-        if r["answerability"] == "answerable"
-    )
-    client.post(f"/api/responses/{row['response_id']}/reviews", json={"verdict": "correct", "reviewer": "pm"})
-    after = client.get("/api/decision").json()["decision"]
-    assert after["approaches"]["guarded_rag"]["label_sources"]["human"] == 1
-    assert human_override_note(after).startswith("1 of ")
+
+    def answerable_row(approach):
+        rows = client.get(f"/api/runs/{run_id}/cases", params={"approach": approach, "split": "held_out"}).json()
+        return next(r for r in rows if r["answerability"] == "answerable" and r["final_label"] == "correct")
+
+    def review(row, verdict):
+        client.post(f"/api/responses/{row['response_id']}/reviews", json={"verdict": verdict, "reviewer": "pm"})
+        return client.get("/api/decision").json()["decision"]
+
+    # Agreeing with the automated label is a confirmation, not an override.
+    target_row = answerable_row("guarded_rag")
+    confirmed = review(target_row, "correct")
+    assert confirmed["approaches"]["guarded_rag"]["human_reviews"] == {"reviewed": 1, "changed": 0}
+    assert human_override_note(confirmed) is None
+
+    # Reviews that flip the baseline's labels move the lift, so they are disclosed too.
+    flipped = review(answerable_row("search"), "incorrect")
+    note = human_override_note(flipped)
+    assert "1 of 35 for Search" in note and "1 more review(s) confirmed" in note
+    assert "Guarded RAG" not in note
+
+    changed = review(target_row, "incorrect")
+    assert "1 of 35 for Guarded RAG" in human_override_note(changed)

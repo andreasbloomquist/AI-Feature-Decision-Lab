@@ -26,7 +26,10 @@ export class ErrorBoundary extends Component<Props, State> {
       <div className="view">
         <div className="notice notice-bad" role="alert">
           <strong>This view couldn't be shown.</strong> {this.state.error}{" "}
-          <a href="#/ask">Go to Ask</a> or pick another view above.
+          <button className="btn btn-small" onClick={() => this.setState({ error: null, failedKey: null })}>
+            Try again
+          </button>{" "}
+          or pick another view above.
         </div>
       </div>
     );

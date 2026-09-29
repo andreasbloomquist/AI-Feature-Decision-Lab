@@ -1,6 +1,6 @@
 # Engineering review
 
-Two principal-engineer reviews of the whole repository. Each records what was found, how each problem was fixed, and which test now guards against it. The [second review](#second-review) comes after the first; [known limitations](#known-limitations-and-next-steps) lists what is still open.
+Principal-engineer reviews of the repository, oldest first. Each records what was found, how each problem was fixed, and which test now guards against it. The [first](#first-review) and [second](#second-review) reviews covered the whole codebase; the [third](#third-review) covered the code the second one added. [Known limitations](#known-limitations-and-next-steps) lists what is still open.
 
 ## First review
 
@@ -84,7 +84,7 @@ Done four days after the first, by two independent reviewers (backend; frontend)
 
 | | Before | After |
 |---|---|---|
-| Backend tests | 97 | 138 |
+| Backend tests | 97 | 137 |
 | Frontend tests | 20 | 29 |
 | React hooks lint rules | 2 | the full recommended set |
 
@@ -132,6 +132,26 @@ Done four days after the first, by two independent reviewers (backend; frontend)
 ### Documentation
 
 The README now explains why the lab matters and what it does and doesn't do for a product manager. It also has a full local-run guide with a working API example, troubleshooting, configuration, and how to adapt the lab to another feature. A new [guide for product managers](for_product_managers.md) covers the decision workflow. An independent product review with a prioritized roadmap is in [product_review.md](product_review.md).
+
+## Third review
+
+This round reviewed the code that the second review and the product review had added (PR #1). The reviewer was independent and had no context from the author. It found no High issues. Every finding was reproduced before it was fixed, and each regression test was checked to fail without its fix.
+
+| | Before | After |
+|---|---|---|
+| Backend tests | 137 | 138 |
+| Frontend tests | 29 | 32 |
+
+| # | Severity | Finding | Fix | Regression test |
+|---|---|---|---|---|
+| 43 | Medium | **Reviews of the baseline moved the comparison without notice.** Five reviews of Search answers moved the lift from +28.6 to +42.9 points, and the override notice stayed silent because it counted only the target. | The notice and the memo cover both the target (which drives the verdict) and the baseline (which drives the lift). | `test_decision_and_memo_disclose_human_overrides` |
+| 44 | Medium | **A confirming review was reported as an override.** A reviewer agreeing with the automated label still triggered "overriding the automated grade", so the warning would fire on routine confirmations and people would learn to ignore it. | Metrics count `human_reviews.reviewed` and `human_reviews.changed`. Only changed labels trigger the notice; confirmations are counted alongside. | `test_decision_and_memo_disclose_human_overrides`, `stays quiet when reviews only confirm the automated labels` (frontend) |
+| 45 | Medium | **`/api/runs` re-graded every skipped run on every request.** Choosing the decision run loaded and summarized every newer unusable run, on every page load (151 ms with 20 skipped runs). | A completed run's usability is computed once, from the target approach's rows only, and cached. It can't change afterwards: reviews change labels, never provider errors. | `test_run_usability_is_computed_once_per_completed_run` |
+| 46 | Medium | **The source drawer reopened after navigating away and back.** It was hidden on other routes, not closed. | The drawer is cleared when the route changes. | `closes for good when you navigate away, and doesn't reopen when you come back` |
+| 47 | Low | A malformed document response in the source drawer blanked the app, because the drawer sat outside the error boundary. The boundary also had no way to retry on the landing route. | The drawer has its own boundary, and the boundary has a "Try again" button. | `offers Try again, which re-renders the view` |
+| 48 | Low | The review form said notes are "still recorded" on non-answerable cases, but it needed a verdict that has no effect there. | The copy now says the verdict is recorded but changes no metric. Making the verdict optional would need a schema migration; not worth it for this. | — |
+| 49 | Low | API validation errors reached the UI as "The request was not valid." with no reason. | The first field and its message are shown. | — |
+| 50 | Low | The second review's backend test count was off by one. | Corrected. | — |
 
 ## Known limitations and next steps
 
