@@ -1,4 +1,6 @@
-# Product review and enhancement roadmap
+# Product review
+
+This review is the reasoning behind the [roadmap](ROADMAP.md). The roadmap is the plan of record and is kept up to date; this page is a snapshot from 2026-09-29.
 
 *An independent review from the point of view of a Director-level product manager who has shipped LLM features. It was written by a reviewer agent with no stake in the code, at commit `89d2924` on 2026-09-29. The reviewer read the docs, config, dataset and code, used the running app in fixture mode, and probed the API with a throwaway database.*
 
