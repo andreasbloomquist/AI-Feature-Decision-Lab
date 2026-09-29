@@ -10,7 +10,7 @@ This review is the reasoning behind the [roadmap](ROADMAP.md). The roadmap is th
 > - **Configurable labels.** Recommendation text names the configured target and baseline instead of "Guarded RAG" and "search".
 > - **Doc drift.** The broken `product_review.md` links and the "By category" claim are fixed.
 >
-> Everything else below is open, and the enhancement table is the roadmap.
+> Everything else below was open at the time of the review. The current plan and statuses are in [ROADMAP.md](ROADMAP.md), which supersedes the enhancement table and the 30/60/90-day plan below.
 
 ## Verdict
 

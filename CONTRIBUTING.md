@@ -5,7 +5,7 @@ This guide is for everyone who changes the repository, people and AI agents alik
 **The short version**
 1. Branch from `main`. Never commit to `main` directly.
 2. Keep each PR to one purpose, and open it against `main`.
-3. Run `make check` before you push. CI runs the same checks.
+3. Run `make check` before you push. It runs everything CI runs: lint, format, types, all tests and the production build.
 4. Every PR that changes code gets a principal-engineer review before it merges (see [below](#principal-engineer-review)).
 5. Update the docs and the [roadmap](docs/ROADMAP.md) in the same PR as the change.
 
@@ -13,7 +13,7 @@ This guide is for everyone who changes the repository, people and AI agents alik
 
 ```bash
 make setup    # Python venv in .venv plus frontend packages (Python 3.10+, Node 22.22+)
-make check    # lint, format check, typecheck, backend and frontend tests
+make check    # lint, format check, typecheck, backend and frontend tests, production build
 ```
 
 See the [README](README.md#run-it-locally) for running the app.
@@ -34,7 +34,7 @@ Name branches `<type>/<short-description>`, using the same types as commit messa
 ### Commits
 
 - **Subject line:** imperative mood, at most 72 characters, no trailing period. For example, `Fix existence oracle in public citations`. A `type:` prefix (`fix: …`) is welcome but not required.
-- **Body:** say *why* the change is needed and what it affects, not a line-by-line list of what changed. Reference roadmap IDs (`R2.3`) and review finding numbers (`#35`) where they apply.
+- **Body:** say *why* the change is needed and what it affects, not a line-by-line list of what changed. Reference roadmap IDs (`R2.3`) and review findings (`review finding 35`) where they apply. Don't write a bare `#35`: GitHub turns it into a link to issue or PR 35.
 - **One logical change per commit.** Don't mix a refactor with a behaviour change.
 - **No secrets, ever.** `.env` is git-ignored. If a key is committed by mistake, rotate the key first; rewriting history comes second.
 

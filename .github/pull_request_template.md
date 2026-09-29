@@ -18,7 +18,7 @@
 
 ## Review checklist
 
-See [CONTRIBUTING.md → Principal-engineer review](../CONTRIBUTING.md#principal-engineer-review).
+See the "Principal-engineer review" section of CONTRIBUTING.md in the repository root.
 
 - [ ] Independent principal-engineer review done (or docs-only change)
 - [ ] Decision integrity: no path to a recommendation the evidence doesn't support

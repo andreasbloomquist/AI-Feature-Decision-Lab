@@ -40,7 +40,7 @@ AI features are also non-deterministic. The same question can get a different an
 | **Talk about risk honestly** | "It's about 90% accurate" | "32 of 35, interval 78–97%, on synthetic questions": every rate shows its sample size and uncertainty |
 | **Bring in judgement** | Engineers grade their own output | A PM or policy owner can override any grade in the Inspect view, with their name on it. The automated scores are kept alongside, and the Decision view says how many labels were overridden |
 | **Communicate the decision** | A slide with a screenshot | A generated [decision memo](docs/decision_memo.md) with the proposed action, evidence, failure modes, limits and the next experiment |
-| **Decide again later** | Start over | Change a prompt, model or setting, run `make eval`, and compare the new run with the old one |
+| **Decide again later** | Start over | Change a prompt, model or setting, run `make eval`, and switch between the old and new runs with the run picker. A side-by-side diff is planned ([R2.3](docs/ROADMAP.md#m2-works-on-your-feature)) |
 
 In practice, a PM uses it in four steps:
 1. **Before building,** write the criteria and the evaluation questions with the people who own the risk (here, HR, Finance and Security).
@@ -161,7 +161,7 @@ A few things to notice:
 - **Search is real even in fixture mode**, so it has a measured latency and a cost of $0.
 - **The guarded RAG answer is a saved example.** It has `"fixture": true`, and its latency and cost are `null` ("not measured"), never 0.
 - **Roles are `employee`, `hr`, `finance` and `admin`.** Try the salary question with `"role": "employee"`: every approach returns `"status": "abstained"`.
-- **Fixture mode only has saved answers for the sample questions.** A different question still gets a real search answer, but the RAG approaches return a `fixture_missing` error.
+- **Fixture mode only has saved answers for the sample questions.** A different question still gets a real search answer. Basic RAG returns a `fixture_missing` error. Guarded RAG either abstains (when retrieval is too weak to call the model at all) or returns `fixture_missing`.
 
 Other useful endpoints: `GET /api/health` (mode and model settings), `GET /api/decision` (the current recommendation), `GET /api/runs` (saved evaluation runs). The interactive API docs are at http://localhost:8000/docs.
 
@@ -186,7 +186,7 @@ make eval                     # all 60 cases × 3 approaches + model judge; save
 make demo                     # the app now runs in live mode
 ```
 
-A full run makes up to about 240 model calls (two RAG approaches on 60 cases, plus the judge), which typically costs a few dollars at the default settings; `make eval-dev` is about a quarter of that. Prices come from [`config/pricing.yaml`](config/pricing.yaml), and the run records the real token counts.
+A full run makes at most about 260 model calls: up to 120 answer calls (two RAG approaches × 60 cases), plus one judge call for each answered, answerable response from any approach (up to 141). The cost hasn't been measured yet. Estimate it from [`config/pricing.yaml`](config/pricing.yaml); the run records the real token counts. `make eval-dev` is about a quarter of that.
 
 - **The Decision view and [decision memo](docs/decision_memo.md) use the newest live run** that covers the held-out set.
 - **Runs are stored twice and never overwritten.** Each run is a new SQLite record and a `results/runs/<run_id>.json` export, with the prompts, criteria, dataset and model settings it used.
@@ -208,6 +208,7 @@ All settings live in `.env` (see [`.env.example`](.env.example)):
 | Variable | Default | Meaning |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | *(empty)* | Enables live mode. Never logged, stored or sent to the browser |
+| `LLM_PROVIDER` | `anthropic` | LLM provider. Only `anthropic` is implemented |
 | `LLM_MODEL` | `claude-opus-5-5` | Answer model for both RAG approaches |
 | `LLM_EFFORT` | `low` | `low`, `medium` or `high`; blank to use the API default |
 | `JUDGE_MODEL` | `claude-sonnet-5-5` | Model judge used during evaluation |
@@ -224,7 +225,7 @@ The Northstar example is mostly data and config. To evaluate a different retriev
 |---|---|---|
 | Your documents | `data/corpus/*.md` | Markdown with front matter: `document_id`, `title`, `owner`, `effective_date`, `status` (`active` or `superseded`), `access_groups`, `country`. One passage per `##` section |
 | Roles | `backend/app/access.py` | Map each role to the access groups it can read |
-| Evaluation questions | `data/eval/cases.jsonl` + `dataset.yaml` | Each case has a question, role, category, split, the facts a correct answer must contain, and the acceptable and forbidden sources. Keep a development and a held-out split |
+| Evaluation questions | `data/eval/cases.jsonl` + `data/eval/dataset.yaml` (its `size`, `splits` and `composition` must match the cases) | Each case has a question, role, category, split, the facts a correct answer must contain, and the acceptable and forbidden sources. Keep a development and a held-out split |
 | Launch criteria | `config/launch_criteria.yaml` | Thresholds, the target approach and the baseline. Write these **before** the first live run |
 | Prompts | `config/prompts/*.md` | Versioned; bump the version when you change one |
 | Prices | `config/pricing.yaml` | Needed for cost estimates |
@@ -283,7 +284,7 @@ Work happens on branches, through pull requests against `main`. Every PR that ch
 
 | Path | Contents |
 |---|---|
-| [`data/corpus/`](data/corpus) | 21 synthetic Markdown policies with front matter: two travel-policy versions, US and UK variants, approval thresholds, 4 restricted documents |
+| [`data/corpus/`](data/corpus) | 21 synthetic Markdown policies with front matter: two superseded policies (travel, home office), US and UK variants, approval thresholds, 4 restricted documents |
 | [`data/eval/cases.jsonl`](data/eval/cases.jsonl) | 60 questions: 24 single-document, 12 multi-document, 8 outdated, 8 unanswerable, 8 role-based. Split 15 development / 45 held-out |
 | [`config/`](config) | Versioned prompts, per-approach settings, pricing, launch criteria |
 | [`backend/app/`](backend/app) | FastAPI server, retrieval, approaches, grading, evaluation runner, decision logic |
@@ -296,7 +297,7 @@ Work happens on branches, through pull requests against `main`. Every PR that ch
 ```bash
 make api      # backend with reload on :8000
 make web      # Vite dev server on :5173 (proxies /api to :8000); use both together
-make check    # everything CI runs: lint, format check, typecheck, backend and frontend tests
+make check    # everything CI runs: lint, format check, typecheck, backend and frontend tests, production build
 make reports  # regenerate the evaluation report and decision memo from saved runs
 make fixtures # rebuild the saved example responses used in fixture mode
 ```

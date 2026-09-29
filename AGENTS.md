@@ -4,7 +4,7 @@ Instructions for AI coding agents working in this repository. Read this file, th
 
 ## What this project is
 
-A lab for deciding whether to launch an AI feature, based on evidence. It runs three approaches (keyword `search`, `basic_rag`, `guarded_rag`) on a fixed evaluation set of 60 questions over 21 synthetic policy documents. It grades the answers, and applies launch criteria written in advance to propose one of: *limited pilot*, *do not launch yet*, *do not launch*, *insufficient evidence* or *demonstration only*. The user of the lab is a product manager. The lab proposes; the PM decides.
+A lab for deciding whether to launch an AI feature, based on evidence. It runs three approaches (keyword `search`, `basic_rag`, `guarded_rag`) on a fixed evaluation set over a synthetic policy corpus. The sizes and splits are defined in `data/eval/dataset.yaml`. It grades the answers, and applies launch criteria written in advance to propose one of: *limited pilot*, *do not launch yet*, *do not launch*, *insufficient evidence* or *demonstration only*. The user of the lab is a product manager. The lab proposes; the PM decides.
 
 ## Commands
 
@@ -13,7 +13,7 @@ Run everything from the repository root.
 | Task | Command |
 |---|---|
 | Install | `make setup` |
-| Every check CI runs (run before every push) | `make check` |
+| Every check CI runs: lint, format, types, all tests and the production build. Run it before every push | `make check` |
 | Backend tests only | `cd backend && ../.venv/bin/python -m pytest` |
 | One backend test | `cd backend && ../.venv/bin/python -m pytest tests/test_decision.py -k disclosure` |
 | Frontend tests only | `cd frontend && npx vitest run` |
@@ -35,7 +35,7 @@ Each of these is enforced by tests. A change that needs to relax one is a produc
 5. **Past verdicts are frozen.** Each run stores its launch criteria, their hash, the dataset cases, the prompts and the model settings (`config_snapshot`). Decisions use the stored copy, never the current files.
 6. **Guarded RAG never repairs an answer.** If validation fails, the answer is withheld (status `error`, with a `guard_reason`). There is no second model call.
 7. **A disclosure is a hard stop** at any sample size, and never counts as a success.
-8. **Human reviews are visible.** A review needs a verdict and a reviewer name, keeps the automated grade, and is counted in `label_sources` on the decision.
+8. **Human reviews are visible.** A review needs a verdict and a reviewer name, and it keeps the automated grade. Reviews that change a label are disclosed on the Decision view and in the memo, for both the target and the baseline (`correctness.human_reviews`, `human_override_note`).
 9. **API changes are additive.** Add fields; never rename or remove them. Update `frontend/src/types.ts` in the same change.
 10. **Secrets stay in the environment.** Keys come only from the environment or `.env`. They never appear in responses, logs, the database, exported runs or the browser. `test_no_secret_in_any_response_database_or_export` checks this.
 
@@ -63,14 +63,14 @@ Each of these is enforced by tests. A change that needs to relax one is a produc
 ## How to make common changes
 
 - **Add a metric or criterion.** Compute it in `metrics.py`, then add it to `config/launch_criteria.yaml` (and bump `version`). Handle it in `decision.evaluate_criteria`, show it in `DecisionView.tsx`, and add a test in `backend/tests/test_decision.py`.
-- **Change a prompt.** Copy it to a new version file (for example `guarded_rag.v2.md`), point the approach YAML at the new file, and test on the development split only.
+- **Change a prompt.** Copy it to a new version file (for example `guarded_rag.v2.md`), point the approach YAML at the new file, and test on the development split only. The judge prompt is chosen by `JUDGE_PROMPT` in `backend/app/judge.py`, not by YAML.
 - **Add an API field.** Add it in the backend, then add it as optional in `frontend/src/types.ts` and use it in the view. Test both sides.
 - **Change what a report says.** Edit `reports.py`, then run `make reports`. Never edit the generated Markdown by hand.
 
 ## Rules for agents
 
 - **Workflow.** Work on a branch and open PRs against `main`, following [CONTRIBUTING.md](CONTRIBUTING.md). Never push to `main`, and never force-push a shared branch.
-- **Review.** Before you open a PR that changes code, get an independent principal-engineer review of the diff: a separate agent with no context from you, reviewing against the checklist in CONTRIBUTING.md. Verify each finding, fix it with a regression test, and record Medium-or-higher findings in `docs/engineering_review.md`.
+- **Review.** Before you open a PR that changes code, configuration, prompts, the dataset or the launch criteria, get an independent principal-engineer review of the diff: a separate agent with no context from you, reviewing against the checklist in CONTRIBUTING.md. Verify each finding, fix it with a regression test, and record Medium-or-higher findings in `docs/engineering_review.md`.
 - **Verify before claiming.** Run `make check` and report the actual result. Say plainly what you did not verify, for example "not tested against a live model".
 - **Docs move with code.** Update the README, `docs/`, this file and `docs/ROADMAP.md` in the same PR when behaviour, commands or plans change.
 - **Ask before:**
