@@ -29,7 +29,8 @@ export function CompareView({ runParam, splitParam }: { runParam: string | null;
   const metrics = run.data?.metrics[split] ?? {};
   const isFixture = run.data?.mode === "fixture";
   const cols = APPROACHES.filter((a) => metrics[a]);
-  const hasLive = (runs.data ?? []).some((r) => r.mode === "live");
+  // Only claim "no live evaluation" when the run list actually loaded and has none.
+  const noLiveRuns = runs.data !== null && !runs.data.some((r) => r.mode === "live");
 
   const row = (label: string, hint: string, render: (m: Metrics, a: ApproachId) => ReactNode) => (
     <tr>
@@ -76,7 +77,7 @@ export function CompareView({ runParam, splitParam }: { runParam: string | null;
           and their latency and cost are not measured. Do not compare these numbers with a live run.
         </div>
       )}
-      {run.data && !hasLive && (
+      {run.data && noLiveRuns && (
         <div className="notice">
           <strong>No live evaluation yet.</strong> Set <span className="mono">ANTHROPIC_API_KEY</span> and run{" "}
           <span className="mono">make eval</span> to measure real model behavior.

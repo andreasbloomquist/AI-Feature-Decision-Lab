@@ -10,9 +10,8 @@ export default tseslint.config(
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     languageOptions: { globals: globals.browser },
     plugins: { "react-hooks": reactHooks },
-    rules: {
-      "react-hooks/rules-of-hooks": "error",
-      "react-hooks/exhaustive-deps": "error",
-    },
+    // The full recommended set (including the React Compiler rules such as set-state-in-effect),
+    // with every rule as an error so CI fails on it.
+    rules: Object.fromEntries(Object.keys(reactHooks.configs.recommended.rules).map((rule) => [rule, "error"])),
   },
 );

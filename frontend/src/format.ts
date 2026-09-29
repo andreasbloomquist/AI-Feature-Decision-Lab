@@ -91,6 +91,8 @@ export function msText(ms: number | null | undefined): string {
 export function usdText(v: number | null | undefined): string {
   if (v === null || v === undefined) return "unavailable";
   if (v === 0) return "$0";
+  // A measured cost is never shown as zero, however small.
+  if (v < 0.0001) return "<$0.0001";
   if (v < 0.01) return `$${v.toFixed(4)}`;
   return `$${v.toFixed(3)}`;
 }

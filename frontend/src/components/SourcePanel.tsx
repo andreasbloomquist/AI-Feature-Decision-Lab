@@ -42,7 +42,7 @@ export function SourcePanel({ target, onClose }: { target: SourceTarget; onClose
 
   return (
     <div className="drawer-backdrop" onClick={onClose}>
-      <aside ref={dialog} className="drawer" role="dialog" aria-modal="true" aria-labelledby="source-title" onClick={(e) => e.stopPropagation()}>
+      <aside ref={dialog} className="drawer" role="dialog" aria-modal="true" aria-labelledby="source-title" aria-label={doc.data || doc.error ? undefined : "Source document"} onClick={(e) => e.stopPropagation()}>
         <header className="drawer-head">
           <span className="eyebrow">Source · viewing as {target.role}</span>
           <button ref={closeButton} className="icon-btn" onClick={onClose} aria-label="Close source">

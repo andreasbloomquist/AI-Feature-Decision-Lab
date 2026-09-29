@@ -5,13 +5,13 @@ import type { Rate } from "../types";
 export function MetricCell({ rate, emptyLabel = "no cases" }: { rate: Rate | undefined; emptyLabel?: string }) {
   if (!rate || rate.denominator === 0) return <span className="muted">{emptyLabel}</span>;
   return (
-    <span className="metric-cell" title={`95% interval ${pct(rate.ci_low)}–${pct(rate.ci_high)}`}>
+    <span className="metric-cell" title={`95% interval ${pct(rate.ci_low, 1)}–${pct(rate.ci_high, 1)}`}>
       <span className="metric-value">{pct(rate.value, 1)}</span>{" "}
       <span className="metric-n">
         {rate.numerator}/{rate.denominator}
       </span>
       <span className="metric-ci">
-        95% CI {pct(rate.ci_low)}–{pct(rate.ci_high)}
+        95% CI {pct(rate.ci_low, 1)}–{pct(rate.ci_high, 1)}
       </span>
     </span>
   );

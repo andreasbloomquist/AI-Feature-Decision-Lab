@@ -16,9 +16,18 @@ function fmt(unit: Criterion["unit"], v: number | null): string {
   return String(v);
 }
 
+/** Extra precision, used when rounding would make a failing value look equal to its threshold. */
+function fmtPrecise(unit: Criterion["unit"], v: number): string {
+  if (unit === "rate") return pct(v, 2);
+  if (unit === "ms") return `${Math.round(v).toLocaleString()} ms`;
+  if (unit === "usd") return `$${v.toFixed(5)}`;
+  return String(v);
+}
+
 function measured(c: Criterion): string {
   if (c.state === "insufficient" && c.value === null) return "not measured";
-  const base = fmt(c.unit, c.value);
+  let base = fmt(c.unit, c.value);
+  if (c.state === "fail" && c.value !== null && base === fmt(c.unit, c.threshold)) base = fmtPrecise(c.unit, c.value);
   if (c.unit === "rate" && c.numerator !== undefined) return `${base} (${c.numerator}/${c.n})`;
   if (c.n !== null) return `${base} (n=${c.n})`;
   return base;
@@ -30,8 +39,13 @@ export function DecisionView({ runParam }: { runParam: string | null }) {
   const [showAll, setShowAll] = useState(false);
 
   if (result.error) {
+    // Keep the run picker so a stale or unknown run in the URL is never a dead end.
     return (
       <div className="view">
+        <div className="toolbar">
+          <RunPicker runs={runs.data ?? []} value={runParam} onChange={(id) => navigate("decision", { run: id })} />
+          {runParam && <a href={href("decision")}>Use the latest run</a>}
+        </div>
         <ErrorNotice error={result.error} onRetry={result.reload} />
       </div>
     );
@@ -92,7 +106,7 @@ export function DecisionView({ runParam }: { runParam: string | null }) {
             <p>{d.recommendation.summary}</p>
             {d.comparison && !isFixture && (
               <p className="small">
-                Versus search: correctness {d.comparison.target_correct} vs {d.comparison.baseline_correct}
+                Versus {APPROACH_LABELS[d.comparison.baseline] ?? d.comparison.baseline}: correctness {d.comparison.target_correct} vs {d.comparison.baseline_correct}
                 {d.comparison.correctness_lift_pp !== null && ` (${d.comparison.correctness_lift_pp > 0 ? "+" : ""}${d.comparison.correctness_lift_pp} points)`} · p95{" "}
                 {msText(d.comparison.target_p95_ms)} vs {msText(d.comparison.baseline_p95_ms)} · cost per question {usdText(d.comparison.target_cost_per_question)} vs{" "}
                 {usdText(d.comparison.baseline_cost_per_question)}.
@@ -100,7 +114,9 @@ export function DecisionView({ runParam }: { runParam: string | null }) {
             )}
             {isFixture && d.comparison && (
               <p className="small muted">
-                For illustration only: fixture correctness {d.comparison.target_correct} (guarded) vs {d.comparison.baseline_correct} (search, real).
+                For illustration only: fixture correctness {d.comparison.target_correct} ({APPROACH_LABELS[d.comparison.target] ?? d.comparison.target}) vs{" "}
+                {d.comparison.baseline_correct} ({APPROACH_LABELS[d.comparison.baseline] ?? d.comparison.baseline}
+                {d.comparison.baseline === "search" ? ", real" : ""}).
               </p>
             )}
           </section>
@@ -135,7 +151,7 @@ export function DecisionView({ runParam }: { runParam: string | null }) {
                         <td key={a} className="criterion-cell">
                           <StateBadge state={cc.state} demo={isFixture} />
                           <div className="small">{measured(cc)}</div>
-                          {cc.confidence === "low" && <div className="muted tiny-text">95% CI {pct(cc.ci_low)}–{pct(cc.ci_high)} crosses the threshold</div>}
+                          {cc.confidence === "low" && <div className="muted tiny-text">95% CI {pct(cc.ci_low, 1)}–{pct(cc.ci_high, 1)} crosses the threshold</div>}
                           {cc.reason && <div className="muted tiny-text">{cc.reason}</div>}
                           {cc.state === "fail" && cc.example_case_ids.length > 0 && (
                             <div className="examples tiny-text">

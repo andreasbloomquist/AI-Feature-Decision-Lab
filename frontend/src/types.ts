@@ -231,6 +231,8 @@ export interface Decision {
   recommendation: { verdict: string; headline: string; summary: string };
   approaches: Partial<Record<ApproachId, { label: string; criteria: Criterion[]; passes: number; total: number }>>;
   comparison: {
+    target: ApproachId;
+    baseline: ApproachId;
     correctness_lift_pp: number | null;
     target_correct: string;
     baseline_correct: string;

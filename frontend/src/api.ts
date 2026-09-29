@@ -50,11 +50,13 @@ export const api = {
     }),
   document: (id: string, role: string) => request<DocumentDetail>(`/api/documents/${encodeURIComponent(id)}${qs({ role })}`),
   runs: () => request<RunSummary[]>("/api/runs"),
-  run: (id: string) => request<RunDetail>(`/api/runs/${id}`),
-  cases: (id: string, filters: Record<string, string | undefined>) => request<CaseRow[]>(`/api/runs/${id}/cases${qs(filters)}`),
-  caseDetail: (id: string, caseId: string) => request<CaseDetail>(`/api/runs/${id}/cases/${caseId}`),
+  run: (id: string) => request<RunDetail>(`/api/runs/${encodeURIComponent(id)}`),
+  cases: (id: string, filters: Record<string, string | undefined>) =>
+    request<CaseRow[]>(`/api/runs/${encodeURIComponent(id)}/cases${qs(filters)}`),
+  caseDetail: (id: string, caseId: string) =>
+    request<CaseDetail>(`/api/runs/${encodeURIComponent(id)}/cases/${encodeURIComponent(caseId)}`),
   review: (responseId: string, verdict: string, note: string, reviewer: string) =>
-    request(`/api/responses/${responseId}/reviews`, {
+    request(`/api/responses/${encodeURIComponent(responseId)}/reviews`, {
       method: "POST",
       body: JSON.stringify({ verdict, note: note || null, reviewer: reviewer || null }),
     }),

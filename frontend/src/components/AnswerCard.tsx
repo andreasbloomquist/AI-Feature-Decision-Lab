@@ -50,6 +50,7 @@ export function AnswerCard({ response, role, showMeta = true }: { response: Appr
                     key={`${i}-${id}`}
                     className="cite-chip"
                     title={`${c.title} — open source`}
+                    aria-label={`Source ${n}: ${c.title}`}
                     onClick={() => openSource({ documentId: c.document_id, passageId: c.passage_id, role })}
                   >
                     {n}

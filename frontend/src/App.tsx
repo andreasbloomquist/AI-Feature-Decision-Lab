@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { api } from "./api";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ErrorNotice } from "./components/Notice";
 import { SourcePanel } from "./components/SourcePanel";
 import { ConfigContext } from "./configContext";
@@ -21,8 +22,10 @@ const TABS = [
 export default function App() {
   const route = useRoute();
   const config = useAsync("config", api.config);
-  const [source, setSource] = useState<SourceTarget | null>(null);
-  const openSource = useCallback((t: SourceTarget) => setSource(t), []);
+  const routeKey = `${route.view}?${route.params.toString()}`;
+  // The source drawer belongs to the view it was opened from; navigating away (a tab, Back) closes it.
+  const [source, setSource] = useState<{ target: SourceTarget; routeKey: string } | null>(null);
+  const openSource = useCallback((target: SourceTarget) => setSource({ target, routeKey }), [routeKey]);
   const closeSource = useCallback(() => setSource(null), []);
   const runParam = route.params.get("run");
   const settings = config.data?.settings;
@@ -72,19 +75,21 @@ export default function App() {
             </div>
           )}
           <main>
-            {route.view === "ask" && (
-              // Keyed so a deep link to a different question resets the form.
-              <AskView
-                key={`${route.params.get("q")}:${route.params.get("role")}`}
-                initialQuestion={route.params.get("q")}
-                initialRole={route.params.get("role")}
-              />
-            )}
-            {route.view === "compare" && <CompareView runParam={runParam} splitParam={route.params.get("split")} />}
-            {route.view === "inspect" && <InspectView route={route} />}
-            {route.view === "decision" && <DecisionView runParam={runParam} />}
+            <ErrorBoundary resetKey={routeKey}>
+              {route.view === "ask" && (
+                // Keyed so a deep link to a different question resets the form.
+                <AskView
+                  key={`${route.params.get("q")}:${route.params.get("role")}`}
+                  initialQuestion={route.params.get("q")}
+                  initialRole={route.params.get("role")}
+                />
+              )}
+              {route.view === "compare" && <CompareView runParam={runParam} splitParam={route.params.get("split")} />}
+              {route.view === "inspect" && <InspectView route={route} />}
+              {route.view === "decision" && <DecisionView runParam={runParam} />}
+            </ErrorBoundary>
           </main>
-          {source && <SourcePanel target={source} onClose={closeSource} />}
+          {source?.routeKey === routeKey && <SourcePanel target={source.target} onClose={closeSource} />}
         </div>
       </SourceContext.Provider>
     </ConfigContext.Provider>
