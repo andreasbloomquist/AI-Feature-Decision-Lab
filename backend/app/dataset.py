@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections import Counter
 from functools import lru_cache
 
 import yaml
@@ -68,8 +67,3 @@ def load_dataset() -> dict:
 @lru_cache(maxsize=1)
 def load_restricted_markers() -> dict[str, list[str]]:
     return yaml.safe_load((EVAL_DIR / "restricted_markers.yaml").read_text())
-
-
-def answerability_counts(split: str) -> Counter:
-    """How many cases of each answerability label a split has, e.g. {"answerable": 35, ...}."""
-    return Counter(c["answerability"] for c in load_dataset()["cases"] if c["split"] == split)

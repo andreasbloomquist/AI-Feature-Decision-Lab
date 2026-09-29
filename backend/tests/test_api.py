@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from app import main
@@ -118,3 +119,30 @@ def test_no_secret_in_any_response_database_or_export(tmp_path, monkeypatch):
             assert secret not in text and "sk-ant" not in text
     finally:
         main.reset_caches()
+
+
+@pytest.mark.parametrize("question", ["   ", "  hi  ", "\n\t \n"])
+def test_whitespace_only_question_is_rejected(client, question):
+    assert client.post("/api/ask", json={"question": question, "role": "employee"}).status_code == 422
+
+
+def test_review_does_not_export_a_running_run(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "RESULTS_DIR", tmp_path / "results")
+    db = main.get_db()
+    fixture_run = db.get_run(client.get("/api/runs").json()[0]["run_id"])
+    run_id = "live-still-running"
+    db.create_run({**fixture_run, "run_id": run_id, "mode": "live", "status": "running"})
+    response_id = db.add_response(run_id, "S02", "search", {"status": "answered"}, {}, None)
+    r = client.post(f"/api/responses/{response_id}/reviews", json={"verdict": "correct"})
+    assert r.status_code == 200
+    assert not (tmp_path / "results" / "runs" / f"{run_id}.json").exists()
+    db.finish_run(run_id, "completed", {})
+    client.post(f"/api/responses/{response_id}/reviews", json={"verdict": "incorrect"})
+    assert (tmp_path / "results" / "runs" / f"{run_id}.json").exists()
+
+
+def test_runs_endpoint_marks_only_the_decision_run_as_latest(client):
+    runs = client.get("/api/runs").json()
+    assert all("latest" in r for r in runs)
+    # Only fixture runs exist in the test database, so no run is the live decision run.
+    assert not any(r["latest"] for r in runs if r["mode"] == "fixture")

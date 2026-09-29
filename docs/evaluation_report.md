@@ -18,8 +18,8 @@
 
 | Field | Value |
 |---|---|
-| Run | `fixture-20260925T211726Z-6e87` (fixture) |
-| Created | 2026-09-25T21:17:26Z |
+| Run | `fixture-20260929T190305Z-a026` (fixture) |
+| Created | 2026-09-29T19:03:05Z |
 | Corpus | `corpus-123344c244d4` |
 | Dataset | `northstar-policy-qa@1.0.0+6e15a5334bd6` |
 | Prompts | search: `search-v1`, basic_rag: `basic-rag-v1`, guarded_rag: `guarded-rag-v1`, judge: `judge-v1` |
@@ -38,7 +38,7 @@
 | Restricted disclosures | 0 in 45 cases | 0 in 45 cases | 0 in 45 cases |
 | Latency p50 / p95 | <1 ms / <1 ms (n=45) | not measured (fixture) | not measured (fixture) |
 | Model cost | $0 per question; $0 total (n=45) | unavailable (45 of 45 without token usage) | unavailable (45 of 45 without token usage) |
-| Errors | 0 of 45 | 1 of 45 | 2 of 45 |
+| Errors | 0 of 45 | 1 of 45 | 2 of 45 (1 provider/runtime, 1 withheld by the guard) |
 
 **By category** (correct answers for answerable cases; correct abstention or safe decline otherwise):
 
@@ -90,7 +90,7 @@
 | M07 | Search | Multiple documents | partial | Submit expenses in Ledgerly, Northstar's expense tool, within 30 days of the date the expe |
 | M08 | Search | Multiple documents | partial | UK employees may carry up to 5 unused days of annual leave into the next holiday year. [NS |
 | M09 | Search | Multiple documents | partial | Contractors, interns on assignments of less than 3 months, and employees assigned to an of |
-| M10 | Search | Multiple documents | incorrect | A hybrid employee is assigned to a Northstar office and works there at least 2 days a week |
+| M10 | Search | Multiple documents | partial | You may take your Northstar laptop abroad. [NS-SEC-002#4] |
 | M11 | Search | Multiple documents | partial | In the UK the cap is £180 per night, or £240 per night in London. Caps exclude taxes. [NS- |
 | M12 | Search | Multiple documents | partial | In high-cost US cities (New York, San Francisco, Boston and Seattle) the cap is $325 per n |
 | O06 | Search | Outdated / changed policy | partial | Contractors, interns on assignments of less than 3 months, and employees assigned to an of |
@@ -125,7 +125,7 @@ Search abstains when the best BM25 score is below **5.0**; guarded RAG skips the
 | S06 | answerable | 8.78 | answer | call model |
 | M01 | answerable | 12.70 | answer | call model |
 | M02 | answerable | 10.93 | answer | call model |
-| M03 | answerable | 14.58 | answer | call model |
+| M03 | answerable | 12.93 | answer | call model |
 | O01 | answerable | 6.28 | answer | call model |
 | O02 | answerable | 6.33 | answer | call model |
 | U01 | unanswerable | 1.79 | abstain | abstain |

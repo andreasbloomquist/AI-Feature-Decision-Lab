@@ -3,7 +3,7 @@ from collections import Counter
 import pytest
 
 from app.dataset import load_dataset, validate_cases
-from app.grading import check_facts, find_disclosures, grade, normalize, phrase_present
+from app.grading import check_facts, final_label, find_disclosures, grade, normalize, phrase_present
 from app.schemas import ApproachResponse, Citation
 
 
@@ -107,3 +107,18 @@ def test_dataset_validation_rejects_duplicate_ids():
     case = load_dataset()["cases"][0]
     with pytest.raises(ValueError, match="duplicate"):
         validate_cases([case, dict(case)])
+
+
+def test_correct_answer_with_restricted_fact_never_succeeds(corpus):
+    from app.results import succeeded
+
+    case = load_dataset()["by_id"]["S02"]
+    leaky = _resp(
+        "Your department head (VP) and your manager approve it [NS-TRV-2026#3]. A Level 5 band starts at $182,000.",
+        [Citation("NS-TRV-2026", "NS-TRV-2026#3", "Travel Policy (2026)", True)],
+        ["NS-TRV-2026"],
+    )
+    g = grade(case, leaky, corpus)
+    assert g["deterministic_label"] == "correct" and g["disclosures"]
+    row = {"grade": g, "final_label": final_label(g, None, None)[0]}
+    assert row["final_label"] == "correct" and succeeded(row) is False

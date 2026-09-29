@@ -130,6 +130,8 @@ class Database:
         for k in ("splits", "prompt_versions", "model_config", "config_snapshot", "summary"):
             if d.get(k) is not None:
                 d[k] = json.loads(d[k])
+        # Stored in the snapshot (no schema change); runs saved before the flag existed count as full runs.
+        d["partial"] = bool(((d.get("config_snapshot") or {}).get("run_scope") or {}).get("partial", False))
         return d
 
     def get_run(self, run_id: str) -> dict | None:

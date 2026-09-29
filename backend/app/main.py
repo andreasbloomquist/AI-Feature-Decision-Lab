@@ -14,7 +14,7 @@ from typing import Annotated, Literal
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from .access import ROLE_GROUPS, ROLE_LABELS, can_access, check_role
 from .approaches import APPROACH_NAMES, Approach, ApproachContext, build_approaches
@@ -152,7 +152,8 @@ def get_document(document_id: str, role: RoleDep) -> dict:
 # Ask
 # ---------------------------------------------------------------------------------------
 class AskRequest(BaseModel):
-    question: str = Field(min_length=3, max_length=500)
+    # Whitespace is stripped before the length check, so "   " is rejected rather than asked.
+    question: Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=500)]
     role: str
     approaches: list[Literal["search", "basic_rag", "guarded_rag"]] = Field(
         default_factory=lambda: list(APPROACH_NAMES)
@@ -187,7 +188,10 @@ def _run_or_404(db: Database, run_id: str) -> dict:
 
 @app.get("/api/runs")
 def list_runs(db: DbDep) -> list[dict]:
-    return db.list_runs()
+    # `latest` marks the live run the Decision view uses by default, so the UI never has to repeat
+    # the rules for skipping development-only, partial and error-dominated runs.
+    live, _ = latest_runs(db)
+    return [{**r, "latest": live is not None and r["run_id"] == live["run_id"]} for r in db.list_runs()]
 
 
 @app.get("/api/runs/{run_id}")
@@ -270,8 +274,10 @@ def add_review(response_id: str, req: ReviewRequest, db: DbDep) -> dict:
     review = db.add_review(response_id, req.verdict, req.note, req.reviewer)
     # The automated grade and judge verdict are never modified; the review is stored alongside.
     updated = db.get_response(response_id)
-    if db.get_run(row["run_id"])["mode"] == "live":
-        export_run(db, row["run_id"], RESULTS_DIR / "runs")  # keep the committed export in sync
+    run = db.get_run(row["run_id"])
+    # Keep the committed export in sync, but never export a run that is still being written.
+    if run["mode"] == "live" and run["status"] != "running":
+        export_run(db, row["run_id"], RESULTS_DIR / "runs")
     return {
         "review": review,
         "automated_grade": updated["grade"],

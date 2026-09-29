@@ -33,11 +33,22 @@ class LLMResult:
 class LLMError(Exception):
     """A model call failed. `kind` is a short machine-readable category shown in the UI."""
 
-    def __init__(self, kind: str, message: str, latency_ms: float | None = None):
+    def __init__(
+        self,
+        kind: str,
+        message: str,
+        latency_ms: float | None = None,
+        *,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+    ):
         super().__init__(message)
         self.kind = kind
         self.message = message
         self.latency_ms = latency_ms
+        # Set when the provider billed the call before it failed (e.g. a truncated answer).
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
 
 
 class LLMProvider(Protocol):
@@ -93,17 +104,33 @@ class AnthropicProvider:
         latency = _ms(start)
         if resp.stop_reason == "refusal":
             raise LLMError("refusal", "model declined the request", latency)
-        text = "".join(getattr(b, "text", "") for b in resp.content if b.type == "text")
-        usage = getattr(resp, "usage", None)
-        in_tok = out_tok = None
-        if usage is not None and usage.input_tokens is not None and usage.output_tokens is not None:
-            in_tok = (
-                usage.input_tokens
-                + (getattr(usage, "cache_creation_input_tokens", 0) or 0)
-                + (getattr(usage, "cache_read_input_tokens", 0) or 0)
+        in_tok, out_tok = _usage(resp)
+        if resp.stop_reason == "max_tokens":
+            # A cut-off answer can drop a caveat or a citation mid-sentence; grading it as a
+            # complete answer would overstate quality, so it is recorded as an error instead.
+            # The tokens were still billed, so the usage travels with the error.
+            raise LLMError(
+                "truncated",
+                f"model output hit max_tokens ({max_tokens}) before finishing",
+                latency,
+                input_tokens=in_tok,
+                output_tokens=out_tok,
             )
-            out_tok = usage.output_tokens
+        text = "".join(getattr(b, "text", "") for b in resp.content if b.type == "text")
         return LLMResult(text, self.model, in_tok, out_tok, latency, resp.stop_reason)
+
+
+def _usage(resp) -> tuple[int | None, int | None]:
+    """(input tokens including cache reads/writes, output tokens), or (None, None) if not reported."""
+    usage = getattr(resp, "usage", None)
+    if usage is None or usage.input_tokens is None or usage.output_tokens is None:
+        return None, None
+    in_tok = (
+        usage.input_tokens
+        + (getattr(usage, "cache_creation_input_tokens", 0) or 0)
+        + (getattr(usage, "cache_read_input_tokens", 0) or 0)
+    )
+    return in_tok, usage.output_tokens
 
 
 class FixtureProvider:
@@ -140,7 +167,7 @@ class ScriptedProvider:
     def __init__(
         self,
         script: Callable[[str, str], object],
-        model: str = "claude-opus-5",
+        model: str = "claude-opus-5-5",
         usage: tuple[int, int] | None = (1000, 100),
     ):
         self.name = "scripted"

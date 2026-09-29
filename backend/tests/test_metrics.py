@@ -71,7 +71,15 @@ def test_denominators_and_counts():
     # abstention: unanswerable only
     assert (m["abstention_quality"]["numerator"], m["abstention_quality"]["denominator"]) == (1, 2)
     assert m["access_denied_handling"]["denominator"] == 1
-    assert m["errors"] == {"count": 1, "n": 7, "case_ids": ["A4"]}
+    assert m["errors"] == {
+        "count": 1,
+        "n": 7,
+        "case_ids": ["A4"],
+        "provider": 1,
+        "provider_case_ids": ["A4"],
+        "withheld": 0,
+        "withheld_case_ids": [],
+    }
     assert m["n_cases"] == 7
     for key in ("correctness", "citation_validity", "abstention_quality"):
         assert m[key]["ci_low"] <= m[key]["value"] <= m[key]["ci_high"]
@@ -162,3 +170,10 @@ def test_percentile_nearest_rank():
     assert percentile([], 95) is None
     lo, hi = wilson(0, 10)
     assert lo == 0.0 and hi > 0.2
+
+
+def test_p50_is_nearest_rank_like_p95():
+    rows = [row("answerable", "answered", "correct", latency=v, cid=f"L{v}") for v in (100.0, 200.0, 300.0, 400.0)]
+    lat = compute_metrics(rows)["latency"]
+    assert lat["p50_ms"] == 200.0  # an observed latency, not the interpolated 250
+    assert lat["p50_ms"] == percentile([100.0, 200.0, 300.0, 400.0], 50)

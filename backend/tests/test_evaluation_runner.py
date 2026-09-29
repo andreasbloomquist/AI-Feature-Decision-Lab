@@ -155,3 +155,41 @@ def test_run_is_graded_against_its_own_dataset_snapshot(db, monkeypatch):
     monkeypatch.setattr(results, "load_dataset", lambda: {"cases": [], "by_id": {}})
     rows = results.load_rows(db, run_id)
     assert len(rows) == 15 and all(r["case"]["split"] == "development" for r in rows)
+
+
+def test_export_run_is_atomic(db, tmp_path, monkeypatch):
+    import json
+    from pathlib import Path
+
+    from app import evaluation
+    from app.evaluation import export_run
+
+    run_id = run_evaluation(
+        db, mode="live", splits=("development",), approaches=("search",), llm=ScriptedProvider(str), export_dir=None
+    )
+    export_dir = tmp_path / "export"
+    path = export_run(db, run_id, export_dir)
+    before = path.read_text()
+    assert json.loads(before)["run"]["run_id"] == run_id
+
+    # The new content is written to a temp file and renamed over the export in one step.
+    real_replace, renames = evaluation.os.replace, []
+
+    def spy_replace(src, dst):
+        assert path.read_text() == before  # the export was never opened for writing in place
+        renames.append((Path(src).parent, Path(dst)))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(evaluation.os, "replace", spy_replace)
+    export_run(db, run_id, export_dir)
+    assert renames == [(export_dir, path)]
+    monkeypatch.undo()
+
+    def broken_dumps(*args, **kwargs):
+        raise RuntimeError("serialisation failed half way")
+
+    monkeypatch.setattr(evaluation.json, "dumps", broken_dumps)
+    with pytest.raises(RuntimeError):
+        export_run(db, run_id, export_dir)
+    assert path.read_text() == before  # the previous export is untouched
+    assert [p.name for p in export_dir.iterdir()] == [path.name]  # and no temp file is left behind

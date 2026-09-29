@@ -78,7 +78,15 @@ export interface Metrics {
     per_question_usd: number | null;
   };
   tokens: { input_total: number | null; output_total: number | null; n_with_usage: number };
-  errors: { count: number; n: number; case_ids: string[] };
+  errors: {
+    count: number;
+    n: number;
+    case_ids: string[];
+    /** Provider or runtime failures (timeouts, rate limits, bad output), counted against run validity. */
+    provider?: number;
+    /** Answers the guard withheld on purpose; not failures of the provider. */
+    withheld?: number;
+  };
   status_counts: Record<string, number>;
   fixture_rows: number;
 }
@@ -97,6 +105,10 @@ export interface RunSummary {
   prompt_versions: Record<string, { approach_version?: string; prompt_version: string | null }>;
   model_config: Record<string, string | number | null>;
   n_responses: number;
+  /** A run limited to some cases or approaches (a debug run); never used as the default. */
+  partial?: boolean;
+  /** The live run the backend uses for the decision (full, held-out, not dominated by errors). */
+  latest?: boolean;
 }
 
 export interface RunDetail extends RunSummary {

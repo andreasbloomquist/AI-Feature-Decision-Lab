@@ -117,6 +117,10 @@ class Approach:
             resp.status = "error"
             resp.error = f"{e.kind}: {e.message}"
             resp.latency_ms = e.latency_ms
+            if e.input_tokens is not None and e.output_tokens is not None:
+                # A billed failure (e.g. truncated output) still counts towards cost.
+                resp.input_tokens, resp.output_tokens = e.input_tokens, e.output_tokens
+                resp.estimated_cost_usd = estimate_cost_usd(llm.model, e.input_tokens, e.output_tokens)
             return None
         resp.raw_output = result.text
         # Fixture replays carry no latency; everything else is wall-clock time for the whole approach.

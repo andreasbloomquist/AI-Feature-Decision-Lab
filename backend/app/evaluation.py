@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import secrets
 import sys
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,7 +18,7 @@ from .corpus import Corpus, get_corpus
 from .dataset import load_dataset
 from .db import Database, now_iso
 from .decision import criteria_config
-from .grading import grade
+from .grading import grade, is_withheld
 from .judge import JUDGE_PROMPT, judge_response
 from .llm import FixtureProvider, LLMProvider, make_provider
 from .pricing import load_pricing
@@ -121,6 +123,9 @@ def run_evaluation(
     if unknown:
         raise ValueError(f"unknown approaches {sorted(unknown)}")
     cases = [c for c in dataset["cases"] if c["split"] in splits and (not case_ids or c["case_id"] in case_ids)]
+    covered = [s for s in splits if any(c["split"] == s for c in cases)]  # what the run actually contains
+    # A debug run (`--case`) or one narrowed to some approaches is kept, but never shown as the latest result.
+    partial = bool(case_ids) or set(approaches) != set(APPROACH_NAMES)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_id = f"{mode}-{stamp}-{secrets.token_hex(2)}"
     model_config = {
@@ -138,13 +143,21 @@ def run_evaluation(
             "mode": mode,
             "status": "running",
             "label": label,
-            "splits": list(splits),
+            "splits": covered,
             "judge_mode": "model" if judge_llm else "none",
             "corpus_version": corpus.version,
             "dataset_version": dataset["version"],
             "prompt_versions": prompt_versions(),
             "model_config": model_config,
-            "config_snapshot": config_snapshot(settings),
+            "config_snapshot": {
+                **config_snapshot(settings),
+                "run_scope": {
+                    "partial": partial,
+                    "requested_splits": list(splits),
+                    "approaches": list(approaches),
+                    "case_ids": list(case_ids) if case_ids else None,
+                },
+            },
         }
     )
 
@@ -164,12 +177,13 @@ def run_evaluation(
                 logger.exception("judge failed for case %s", case["case_id"])
                 j = {"verdict": None, "error": f"judge_internal_error: {type(e).__name__}"}
         db.add_response(run_id, case["case_id"], approach.name, resp.to_dict(), g, j)
-        return resp.status
+        # A guard withholding an answer is the approach working as designed, not a failed call.
+        return resp.status == "error" and not is_withheld(resp.status, resp.guard_reason)
 
     try:
         with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
-            for i, status in enumerate(pool.map(work, tasks), 1):
-                failures += status == "error"
+            for i, failed in enumerate(pool.map(work, tasks), 1):
+                failures += failed
                 if progress and (i % 20 == 0 or i == len(tasks)):
                     print(f"  {i}/{len(tasks)} responses ({failures} errors)", file=sys.stderr, flush=True)
     except BaseException:
@@ -189,7 +203,15 @@ def export_run(db: Database, run_id: str, export_dir: Path) -> Path:
     run = db.get_run(run_id)
     rows = db.responses_for_run(run_id)
     path = export_dir / f"{run_id}.json"
-    path.write_text(json.dumps({"run": run, "responses": rows}, indent=2, ensure_ascii=False))
+    # Write to a temporary file and rename, so a reader never sees a half-written export.
+    fd, tmp = tempfile.mkstemp(dir=export_dir, prefix=f".{run_id}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"run": run, "responses": rows}, indent=2, ensure_ascii=False))
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
     return path
 
 

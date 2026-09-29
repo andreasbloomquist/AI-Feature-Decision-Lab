@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import math
-import statistics
 
-from .grading import citation_is_valid, final_label
+from .grading import citation_is_valid, final_label, is_withheld
 
 
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float | None, float | None]:
@@ -83,6 +82,9 @@ def compute_metrics(rows: list[dict]) -> dict:
     tokens_out = [r["response"]["output_tokens"] for r in rows if r["response"].get("output_tokens") is not None]
 
     errors = [r for r in rows if r["response"]["status"] == "error"]
+    withheld = [r for r in errors if is_withheld("error", r["response"].get("guard_reason"))]
+    # Everything else: provider failures (auth, timeout, rate limit, truncation) and runtime exceptions.
+    provider = [r for r in errors if not is_withheld("error", r["response"].get("guard_reason"))]
     status_counts: dict[str, int] = {}
     for r in rows:
         status_counts[r["response"]["status"]] = status_counts.get(r["response"]["status"], 0) + 1
@@ -99,7 +101,7 @@ def compute_metrics(rows: list[dict]) -> dict:
             "n": len(measured),
             "n_unmeasured": len(rows) - len(measured),
             "coverage": round(len(measured) / len(rows), 4) if rows else 0.0,
-            "p50_ms": round(statistics.median(measured), 1) if measured else None,
+            "p50_ms": percentile(measured, 50),  # nearest-rank, like p95
             "p95_ms": percentile(measured, 95),
         },
         "cost": cost,
@@ -108,7 +110,16 @@ def compute_metrics(rows: list[dict]) -> dict:
             "output_total": sum(tokens_out) if tokens_out else None,
             "n_with_usage": min(len(tokens_in), len(tokens_out)),
         },
-        "errors": {"count": len(errors), "n": len(rows), "case_ids": [r["case"]["case_id"] for r in errors]},
+        "errors": {
+            "count": len(errors),
+            "n": len(rows),
+            "case_ids": [r["case"]["case_id"] for r in errors],
+            # `count` = provider + withheld. Only provider errors say the run itself is unreliable.
+            "provider": len(provider),
+            "provider_case_ids": [r["case"]["case_id"] for r in provider],
+            "withheld": len(withheld),
+            "withheld_case_ids": [r["case"]["case_id"] for r in withheld],
+        },
         "status_counts": status_counts,
         "fixture_rows": fixture_rows,
     }

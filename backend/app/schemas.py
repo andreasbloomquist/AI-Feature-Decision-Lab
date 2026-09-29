@@ -66,11 +66,18 @@ class ApproachResponse:
         """What an end user's browser receives.
 
         No raw model output, and a citation to a restricted document is indistinguishable from a
-        citation to one that does not exist, so users cannot probe for restricted IDs.
+        citation to one that does not exist (same placeholder ID, same reason, same warning and
+        error text), so users cannot probe for restricted IDs. Stored runs keep the distinction.
         """
+        # Imported here because `citations` imports this module for the Citation class.
+        from .citations import HIDDEN_REASONS, PUBLIC_HIDDEN_REASON, RESTRICTED, public_reason_text
+
         d = self.to_dict()
         d.pop("raw_output", None)
         for c in d["citations"]:
-            if c["reason"] in ("unauthorized", "unknown_document"):
-                c["reason"] = "unavailable"
+            if c["reason"] in HIDDEN_REASONS:
+                c.update(document_id=RESTRICTED, passage_id=None, title=None, reason=PUBLIC_HIDDEN_REASON)
+        d["warnings"] = [public_reason_text(w) for w in d["warnings"]]
+        if d["error"]:
+            d["error"] = public_reason_text(d["error"])
         return d

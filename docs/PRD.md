@@ -64,6 +64,8 @@ The headline measure for "more useful than search" is the correctness lift over 
 
 Latency and cost are judged on the cases that were actually measured, provided at least 90% of cases were. A timeout with no token usage lowers that coverage instead of counting as free, and one transient error cannot block the verdict on its own.
 
+A run where more than 20% of the target approach's cases failed for provider or runtime reasons (a bad key, an outage, rate limits) gets no quality verdict at all: it is "insufficient evidence: run dominated by errors", and it never replaces the last good run. This data-quality gate was added in criteria version 1.1.0, before any live evaluation existed. Answers that Guarded RAG withholds on purpose are not errors.
+
 ## Scope
 
 In scope: the three approaches, a synthetic corpus and fixed evaluation set, an evaluation runner with saved runs, automated grading plus optional model judge, human review, and a decision view that applies the criteria.

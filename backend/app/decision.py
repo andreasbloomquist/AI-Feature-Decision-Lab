@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import operator
+from collections import Counter
 
 import yaml
 
 from .approaches.base import APPROACH_LABELS, APPROACH_NAMES
 from .corpus import get_corpus
-from .dataset import answerability_counts, load_dataset
 from .db import Database
 from .grading import citation_is_valid
-from .results import load_rows, summarize_rows
+from .results import load_rows, run_cases, run_validity, summarize_rows
 from .settings import CONFIG_DIR
 
 OPS = {"<=": operator.le, ">=": operator.ge}
@@ -108,7 +108,10 @@ def evaluate_criteria(metrics: dict, rows: list[dict], cfg: dict) -> list[dict]:
             entry["n"] = metrics["cost"]["n_with_usage"]
 
         measurement = {"latency_p95": metrics.get("latency"), "cost_per_question": metrics.get("cost")}.get(cid)
-        if measurement is not None and metrics.get("fixture_rows"):
+        if cid == "access_safety" and value:
+            # One disclosure is a hard stop at any sample size; there is nothing to be uncertain about.
+            entry["state"] = "fail"
+        elif measurement is not None and metrics.get("fixture_rows"):
             entry["state"] = "insufficient"
             entry["reason"] = "not measured: fixture responses have no latency or token usage"
         elif measurement is not None and measurement["coverage"] < min_coverage:
@@ -136,7 +139,27 @@ def evaluate_criteria(metrics: dict, rows: list[dict], cfg: dict) -> list[dict]:
     return out
 
 
-def recommend(criteria: list[dict], is_fixture: bool) -> dict:
+def apply_validity_gate(criteria: list[dict], validity: dict, split: str) -> list[dict]:
+    """In a run dominated by provider errors, no criterion is a quality verdict: each becomes
+    "insufficient". A disclosure is the exception, because leaked content was really shown."""
+    if validity["valid"]:
+        return criteria
+    reason = (
+        f"not assessed: {validity['provider_errors']} of {validity['n_cases']} {split.replace('_', '-')} "
+        f"cases failed with provider or runtime errors (limit {validity['max_error_rate']:.0%})"
+    )
+    out = []
+    for c in criteria:
+        if c["id"] == "access_safety" and c["state"] == "fail":
+            out.append(c)
+        else:
+            out.append({**c, "state": "insufficient", "reason": reason, "confidence": None, "example_case_ids": []})
+    return out
+
+
+def recommend(
+    criteria: list[dict], is_fixture: bool, validity: dict | None = None, target_label: str = "Guarded RAG"
+) -> dict:
     fails = [c for c in criteria if c["state"] == "fail"]
     insufficient = [c for c in criteria if c["state"] == "insufficient"]
     if is_fixture:
@@ -151,6 +174,15 @@ def recommend(criteria: list[dict], is_fixture: bool) -> dict:
             "verdict": "do_not_launch",
             "headline": "Do not launch: restricted content was disclosed",
             "summary": "Guarded RAG disclosed restricted content to an unauthorized role. This is a hard stop regardless of other results.",
+        }
+    if validity is not None and not validity["valid"]:
+        return {
+            "verdict": "insufficient_evidence",
+            "headline": "Insufficient evidence: run dominated by errors",
+            "summary": f"Run dominated by errors: {validity['provider_errors']} of {validity['n_cases']} cases failed "
+            f"for {target_label} ({validity['error_rate']:.0%}, above the {validity['max_error_rate']:.0%} limit) "
+            "because of provider or runtime errors, such as a bad API key, an outage or rate limits. These results "
+            "say nothing about answer quality. Fix the cause and re-run the evaluation.",
         }
     if fails:
         names = ", ".join(c["label"].lower() for c in fails)
@@ -197,18 +229,23 @@ def build_decision(db: Database, run_id: str) -> dict:
     for a in APPROACH_NAMES:
         if a not in split_metrics:
             continue
+        validity = run_validity(split_metrics[a], cfg)
         crit = evaluate_criteria(split_metrics[a], [r for r in split_rows if r["approach"] == a], cfg)
+        crit = apply_validity_gate(crit, validity, split)
         per_approach[a] = {
             "label": APPROACH_LABELS[a],
             "criteria": crit,
             "passes": sum(c["state"] == "pass" for c in crit),
             "total": len(crit),
+            "run_validity": validity,
         }
 
     target = cfg.get("target_approach", "guarded_rag")
     baseline = cfg.get("baseline_approach", "search")
     if target in per_approach:
-        rec = recommend(per_approach[target]["criteria"], is_fixture)
+        rec = recommend(
+            per_approach[target]["criteria"], is_fixture, per_approach[target]["run_validity"], APPROACH_LABELS[target]
+        )
     else:
         rec = {
             "verdict": "insufficient_evidence",
@@ -216,9 +253,8 @@ def build_decision(db: Database, run_id: str) -> dict:
             "summary": f"This run has no {split} results for {APPROACH_LABELS.get(target, target)}.",
         }
 
-    failing = [
-        c["id"] for c in per_approach.get(target, {}).get("criteria", []) if c["state"] in ("fail", "insufficient")
-    ]
+    # Only a measured failure suggests an experiment; missing evidence is fixed by measuring, not tuning.
+    failing = [c["id"] for c in per_approach.get(target, {}).get("criteria", []) if c["state"] == "fail"]
     return {
         "run_id": run_id,
         "run_mode": run["mode"],
@@ -232,6 +268,7 @@ def build_decision(db: Database, run_id: str) -> dict:
         "correctness_source": cfg.get("correctness_source"),
         "criteria_registered_on": str(cfg.get("registered_on")),
         "target_approach": target,
+        "run_validity": per_approach[target]["run_validity"] if target in per_approach else None,
         "recommendation": rec,
         "approaches": per_approach,
         "comparison": _comparison(split_metrics, target, baseline),
@@ -239,7 +276,7 @@ def build_decision(db: Database, run_id: str) -> dict:
         if is_fixture
         else [{"criterion": f, "text": NEXT_EXPERIMENTS[f]} for f in failing if f in NEXT_EXPERIMENTS],
         "rollout_tests": ROLLOUT_TESTS,
-        "limitations": limitations(split),
+        "limitations": limitations(split, list(run_cases(run).values())),
     }
 
 
@@ -262,19 +299,25 @@ def _comparison(split_metrics: dict, target: str, baseline: str) -> dict | None:
     }
 
 
-def limitations(split: str) -> list[str]:
-    """Limits of the experiment, with sample sizes computed from the dataset rather than hardcoded."""
-    ds = load_dataset()
-    counts = answerability_counts(split)
-    smallest = min(n for n in counts.values() if n)
-    largest = max(counts.values())
+def _denominator_note(counts: Counter) -> str:
+    sizes = [n for n in counts.values() if n]
+    if not sizes:
+        return "No cases in this split, so no rate can be computed."
+    return (
+        f"Small denominators: {counts['answerable']} answerable, {counts['unanswerable']} unanswerable and "
+        f"{counts['access_denied']} access-denied cases, so one case moves a rate by {100 / max(sizes):.0f} to "
+        f"{100 / min(sizes):.0f} points. Confidence intervals are shown for that reason."
+    )
+
+
+def limitations(split: str, cases: list[dict]) -> list[str]:
+    """Limits of the experiment, with sample sizes computed from the run's own dataset snapshot."""
+    counts = Counter(c["answerability"] for c in cases if c["split"] == split)
     return [
-        f"{len(ds['cases'])} synthetic questions ({sum(counts.values())} in the {split.replace('_', '-')} set) on a "
+        f"{len(cases)} synthetic questions ({sum(counts.values())} in the {split.replace('_', '-')} set) on a "
         f"{len(get_corpus().documents)}-document synthetic corpus. Enough to demonstrate a decision process, "
         "not to establish production reliability.",
-        f"Small denominators: {counts['answerable']} answerable, {counts['unanswerable']} unanswerable and "
-        f"{counts['access_denied']} access-denied cases, so one case moves a rate by {100 / largest:.0f} to "
-        f"{100 / smallest:.0f} points. Confidence intervals are shown for that reason.",
+        _denominator_note(counts),
         "Questions were written by the same author as the documents, so they are cleaner and closer to the "
         "document wording than real employee questions.",
         "Deterministic fact matching is strict about figures and lenient about wording; the model judge is itself "
