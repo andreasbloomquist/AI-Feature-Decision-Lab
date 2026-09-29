@@ -155,7 +155,7 @@ This round reviewed the code that the second review and the product review had a
 
 ## Known limitations and next steps
 
-These are open by choice, and are listed so a reader doesn't have to find them:
+These are open by choice, and are listed so a reader doesn't have to find them. Planned work is scheduled on the [roadmap](ROADMAP.md) (items E1–E3 and milestone M1).
 
 1. **No live evaluation has been run.** The decision is "no live evaluation yet" until someone runs `make eval` with a key. Everything is built so that run can say "do not launch".
 2. **The fixture responses were written by hand.** They exercise the pipeline and the UI, but they are not evidence. See [decision 13](decisions.md#13-fixture-mode-saved-example-outputs-replayed-through-the-real-pipeline).
