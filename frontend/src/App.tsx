@@ -27,6 +27,8 @@ export default function App() {
   const [source, setSource] = useState<{ target: SourceTarget; routeKey: string } | null>(null);
   const openSource = useCallback((target: SourceTarget) => setSource({ target, routeKey }), [routeKey]);
   const closeSource = useCallback(() => setSource(null), []);
+  // Clear (not just hide) a drawer from another route, so Back or returning to the view doesn't reopen it.
+  if (source && source.routeKey !== routeKey) setSource(null);
   const runParam = route.params.get("run");
   const settings = config.data?.settings;
 
@@ -89,7 +91,11 @@ export default function App() {
               {route.view === "decision" && <DecisionView runParam={runParam} />}
             </ErrorBoundary>
           </main>
-          {source?.routeKey === routeKey && <SourcePanel target={source.target} onClose={closeSource} />}
+          {source?.routeKey === routeKey && (
+            <ErrorBoundary resetKey={routeKey}>
+              <SourcePanel target={source.target} onClose={closeSource} />
+            </ErrorBoundary>
+          )}
         </div>
       </SourceContext.Provider>
     </ConfigContext.Provider>

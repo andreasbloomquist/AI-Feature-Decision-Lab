@@ -363,7 +363,8 @@ function ReviewBox({
       )}
       <p className="muted small">
         A review sets the final label for metrics. The automated grade and any model-judge verdict above are kept unchanged.
-        {!canReview && " Correctness reviews apply to answerable cases; notes are still recorded."}
+        {!canReview &&
+          " This case isn't scored on correctness, so the verdict you choose is recorded with your note but doesn't change any metric."}
       </p>
       <div className="review-form">
         <div className="radio-row" role="radiogroup" aria-label="Verdict">

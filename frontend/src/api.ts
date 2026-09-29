@@ -16,7 +16,12 @@ export class ApiError extends Error {
 function detailMessage(detail: unknown, status: number): string {
   if (typeof detail === "string") return detail;
   if (detail && typeof detail === "object" && "error" in detail) return String((detail as { error: unknown }).error);
-  if (Array.isArray(detail)) return "The request was not valid.";
+  if (Array.isArray(detail)) {
+    // FastAPI validation errors: name the field and the reason, e.g. "reviewer: String should have at least 1 character".
+    const first = detail[0] as { loc?: unknown[]; msg?: string } | undefined;
+    const field = first?.loc?.filter((p) => p !== "body").join(".");
+    return first?.msg ? `The request was not valid${field ? ` (${field})` : ""}: ${first.msg}.` : "The request was not valid.";
+  }
   return `The server returned HTTP ${status}.`;
 }
 
@@ -58,7 +63,7 @@ export const api = {
   review: (responseId: string, verdict: string, note: string, reviewer: string) =>
     request(`/api/responses/${encodeURIComponent(responseId)}/reviews`, {
       method: "POST",
-      body: JSON.stringify({ verdict, note: note || null, reviewer: reviewer || null }),
+      body: JSON.stringify({ verdict, note: note || null, reviewer }),
     }),
   decision: (runId?: string) => request<DecisionResponse>(`/api/decision${qs({ run_id: runId })}`),
 };

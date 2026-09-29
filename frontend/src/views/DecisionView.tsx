@@ -33,12 +33,27 @@ function measured(c: Criterion): string {
   return base;
 }
 
-/** Says when the target's correctness rests partly on human reviews, which override the automated grade. */
+/**
+ * Says when human reviews changed correctness labels of the target (the verdict) or the baseline (the lift).
+ * Reviews that agree with the automated label are confirmations and are only counted. Mirrors the backend's
+ * `human_override_note`, which writes the same sentence into the memo.
+ */
 function humanOverrides(d: NonNullable<DecisionResponse["decision"]>): string | null {
-  const sources = d.approaches[d.target_approach]?.label_sources;
-  if (!sources?.human) return null;
-  const total = sources.human + sources.model_judge + sources.deterministic;
-  return `${sources.human} of ${total} correctness labels for ${APPROACH_LABELS[d.target_approach]} come from human review, overriding the automated grade. Check those reviews in Inspect before relying on this verdict.`;
+  const approaches = [...new Set([d.target_approach, ...(d.comparison ? [d.comparison.baseline] : [])])];
+  const parts: string[] = [];
+  let confirmed = 0;
+  for (const a of approaches) {
+    const entry = d.approaches[a];
+    const reviews = entry?.human_reviews;
+    if (!reviews) continue;
+    const s = entry.label_sources;
+    const total = s ? s.human + s.model_judge + s.deterministic : 0;
+    confirmed += reviews.reviewed - reviews.changed;
+    if (reviews.changed) parts.push(`${reviews.changed} of ${total} for ${APPROACH_LABELS[a]}`);
+  }
+  if (!parts.length) return null;
+  const more = confirmed ? ` ${confirmed} more review(s) confirmed the automated label.` : "";
+  return `Human review changed correctness labels: ${parts.join("; ")}.${more} Check those reviews in Inspect before relying on this verdict or the comparison.`;
 }
 
 export function DecisionView({ runParam }: { runParam: string | null }) {

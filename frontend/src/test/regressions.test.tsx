@@ -86,17 +86,56 @@ describe("usdText", () => {
 });
 
 describe("DecisionView human overrides", () => {
+  it("stays quiet when reviews only confirm the automated labels", async () => {
+    const decision = {
+      run_id: "live-1", run_mode: "live", run_created_at: "", model_config: {}, evaluated_split: "held_out", n_cases: 45,
+      criteria_version: "1.1.0", criteria_hash: "abc", criteria_changed_since_run: false, criteria_registered_on: "2026-09-25",
+      correctness_source: null, target_approach: "guarded_rag",
+      recommendation: { verdict: "limited_pilot", headline: "Proceed to a limited pilot", summary: "" },
+      approaches: { guarded_rag: { label: "Guarded RAG", criteria: [], passes: 0, total: 0, human_reviews: { reviewed: 4, changed: 0 } } },
+      comparison: null, next_experiments: [], rollout_tests: [], limitations: [],
+    };
+    mockFetch({ "/api/decision": { live_available: true, decision }, "/api/runs": [] });
+    render(<DecisionView runParam={null} />);
+    expect(await screen.findByText("Proceed to a limited pilot")).toBeInTheDocument();
+    expect(screen.queryByText(/Human review changed/)).toBeNull();
+  });
+
   it("says when the verdict rests on human-reviewed labels", async () => {
     const decision = {
       run_id: "live-1", run_mode: "live", run_created_at: "", model_config: {}, evaluated_split: "held_out", n_cases: 45,
       criteria_version: "1.1.0", criteria_hash: "abc", criteria_changed_since_run: false, criteria_registered_on: "2026-09-25",
       correctness_source: null, target_approach: "guarded_rag",
       recommendation: { verdict: "limited_pilot", headline: "Proceed to a limited pilot", summary: "" },
-      approaches: { guarded_rag: { label: "Guarded RAG", criteria: [], passes: 0, total: 0, label_sources: { human: 2, model_judge: 30, deterministic: 3 } } },
+      approaches: {
+        guarded_rag: {
+          label: "Guarded RAG", criteria: [], passes: 0, total: 0,
+          label_sources: { human: 3, model_judge: 29, deterministic: 3 }, human_reviews: { reviewed: 3, changed: 2 },
+        },
+      },
       comparison: null, next_experiments: [], rollout_tests: [], limitations: [],
     };
     mockFetch({ "/api/decision": { live_available: true, decision }, "/api/runs": [] });
     render(<DecisionView runParam={null} />);
-    expect(await screen.findByText(/2 of 35 correctness labels for Guarded RAG come from human review/)).toBeInTheDocument();
+    expect(await screen.findByText(/changed correctness labels: 2 of 35 for Guarded RAG\. 1 more review\(s\) confirmed/)).toBeInTheDocument();
+  });
+});
+
+describe("ErrorBoundary retry", () => {
+  it("offers Try again, which re-renders the view", () => {
+    let fail = true;
+    const Flaky = () => {
+      if (fail) throw new Error("transient");
+      return <p>recovered</p>;
+    };
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    render(
+      <ErrorBoundary resetKey="ask?">
+        <Flaky />
+      </ErrorBoundary>,
+    );
+    fail = false;
+    act(() => screen.getByRole("button", { name: "Try again" }).click());
+    expect(screen.getByText("recovered")).toBeInTheDocument();
   });
 });

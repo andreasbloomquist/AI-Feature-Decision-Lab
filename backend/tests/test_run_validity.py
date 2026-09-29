@@ -160,3 +160,17 @@ def test_withheld_answers_do_not_mark_run_completed_with_errors(db):
 def test_provider_errors_still_mark_run_completed_with_errors(db):
     run_id = live_run(db, llm=ScriptedProvider(bad_key), splits=("development",), approaches=("guarded_rag",))
     assert db.get_run(run_id)["status"] == "completed_with_errors"
+
+
+def test_run_usability_is_computed_once_per_completed_run(db, monkeypatch):
+    good = live_run(db)
+    for _ in range(3):
+        live_run(db, llm=ScriptedProvider(bad_key))
+    assert latest_runs(db)[0]["run_id"] == good
+
+    calls = []
+    original = db.responses_for_run
+    monkeypatch.setattr(db, "responses_for_run", lambda run_id: calls.append(run_id) or original(run_id))
+    for _ in range(5):
+        assert latest_runs(db)[0]["run_id"] == good
+    assert calls == []  # /api/runs and /api/decision no longer re-grade skipped runs on every request
