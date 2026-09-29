@@ -2,7 +2,9 @@
 
 Document IDs are matched case-insensitively everywhere, so `[ns-hr-001#2]` is treated exactly
 like `[NS-HR-001#2]`. A document the user may not read is never named back to them: its
-citation is replaced by a placeholder and any mention in the answer text is redacted.
+citation is replaced by a placeholder and any mention in the answer text is redacted. A
+corpus-shaped ID that does not exist is treated the same way, so the difference between
+"restricted" and "missing" cannot be used to probe which restricted IDs exist.
 """
 
 from __future__ import annotations
@@ -15,6 +17,8 @@ from .schemas import Citation
 
 RESTRICTED = "[restricted]"  # stands in for a restricted document's ID in citation lists
 REDACTED_MENTION = "restricted document"  # replaces a restricted ID inside answer text
+HIDDEN_REASONS = ("unauthorized", "unknown_document")  # shown to the user as one public reason
+PUBLIC_HIDDEN_REASON = "unavailable"
 BRACKET_RE = re.compile(r"\[([^\[\]]{2,200})\]")
 # A single citation inside brackets: DOC-ID or DOC-ID#n, nothing else.
 ID_RE = re.compile(r"^\s*([A-Za-z]{2,}(?:-[A-Za-z0-9]+)+)(?:#(\d+))?\s*$")
@@ -53,11 +57,6 @@ def malformed_markers(text: str) -> list[str]:
     return bad
 
 
-def mentioned_document_ids(text: str, corpus: Corpus) -> set[str]:
-    """Corpus document IDs named anywhere in the text, inside or outside citation brackets."""
-    return {t.upper() for t in ID_TOKEN_RE.findall(text)} & set(corpus.documents)
-
-
 def validate_citation(
     corpus: Corpus, role: str, document_id: str, passage_id: str | None, context_passage_ids: set[str]
 ) -> Citation:
@@ -87,11 +86,39 @@ def validate_all(corpus: Corpus, role: str, text: str, context_passage_ids: set[
     return [validate_citation(corpus, role, d, p, context_passage_ids) for d, p in parse_citation_markers(text)]
 
 
+def _is_hidden_id(token: str, corpus: Corpus, role: str) -> bool:
+    """A restricted document, or an unknown ID shaped like a corpus ID (same prefix, e.g. `NS-`)."""
+    doc_id = token.upper()
+    doc = corpus.get(doc_id)
+    if doc is None:
+        return doc_id.split("-", 1)[0] in {d.split("-", 1)[0] for d in corpus.documents}
+    return not can_access(role, doc)
+
+
+def hidden_mentions(text: str, corpus: Corpus, role: str) -> set[str]:
+    """Restricted or nonexistent corpus-style IDs named anywhere in the text."""
+    return {t.upper() for t in ID_TOKEN_RE.findall(text) if _is_hidden_id(t, corpus, role)}
+
+
 def redact_restricted_mentions(text: str, corpus: Corpus, role: str) -> str:
-    """Replace every mention of a document the role may not read with a placeholder."""
+    """Replace every mention of a document the role may not read, or that does not exist, with a placeholder."""
 
     def repl(m: re.Match) -> str:
-        doc = corpus.get(m.group(1).upper())
-        return REDACTED_MENTION if doc is not None and not can_access(role, doc) else m.group(0)
+        return REDACTED_MENTION if _is_hidden_id(m.group(1), corpus, role) else m.group(0)
 
     return ID_TOKEN_RE.sub(repl, text)
+
+
+# "NS-ZZ-999 (unknown_document)" or "[restricted] (unauthorized)" inside a warning or error string.
+_HIDDEN_REASON_RE = re.compile(
+    r"(?:"
+    + re.escape(RESTRICTED)
+    + r"|[A-Za-z]{2,}(?:-[A-Za-z0-9]+)+(?:#\d+)?) \((?:"
+    + "|".join(HIDDEN_REASONS)
+    + r")\)"
+)
+
+
+def public_reason_text(text: str) -> str:
+    """Rewrite invalid-citation notes so a restricted and a nonexistent document read the same."""
+    return _HIDDEN_REASON_RE.sub(f"{RESTRICTED} ({PUBLIC_HIDDEN_REASON})", text)

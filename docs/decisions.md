@@ -26,7 +26,7 @@ Each entry ends with **Revisit when**, the condition under which the decision sh
 | 6 | Access control | A separate index per role, built after filtering |
 | 7 | Superseded policies | Removed from retrieval; changes answered from the active policy |
 | 8 | LLM provider and SDK | Anthropic, through the official `anthropic` Python SDK |
-| 9 | Models and settings | `claude-opus-5` at low effort for answers, `claude-sonnet-5` for the judge, all configurable |
+| 9 | Models and settings | `claude-opus-5-5` at low effort for answers, `claude-sonnet-5-5` for the judge, all configurable |
 | 10 | LLM framework | None: no LangChain, LlamaIndex or LiteLLM |
 | 11 | Output and citation format | Text contract with inline passage IDs, validated after generation |
 | 12 | Refusal fallbacks and retries | Fallback to another model off; one SDK retry; no repair call |
@@ -203,22 +203,24 @@ When a restricted question is asked, the assistant says it couldn't find the ans
 ## 9. Models and settings
 
 **Decision.**
-- **Answer model:** `claude-opus-5` with `output_config.effort = "low"`.
-- **Judge model:** `claude-sonnet-5`.
+- **Answer model:** `claude-opus-5-5` (Claude Opus 5.5) with `output_config.effort = "low"`.
+- **Judge model:** `claude-sonnet-5-5` (Claude Sonnet 5.5).
+- **Truncation:** a response that stops at `max_tokens` is recorded as a `truncated` error, never graded as a complete answer.
 - **Limits:** 20-second timeout, one SDK retry, `max_tokens` of 2,000.
 - **Configuration:** everything is overridable in `.env` (`LLM_MODEL`, `LLM_EFFORT`, `JUDGE_MODEL`, `LLM_TIMEOUT_S`, `LLM_MAX_RETRIES`). Prices live in `config/pricing.yaml`.
 
 **Why.**
 - **Answer model:** Opus is the capable default for following a strict contract ("cite every claim, abstain otherwise"). Low effort is chosen on the *hypothesis* that it keeps short, well-scoped questions within the six-second p95 and $0.02-per-question criteria. No live run has tested that yet, and the decision view will say so if it is wrong.
 - **Judge model:** a cheaper model from a different tier. Judging is a narrower task, and using a different model than the one being graded reduces the risk of a model grading itself favourably.
-- **Max tokens:** 2,000 leaves room for the model's internal reasoning, so answers aren't cut off halfway.
+- **Effort is set explicitly.** Opus 5.5 always thinks; effort is the only control, and its API default is `medium`, so leaving it unset would silently raise latency and cost. Opus 5.5 also replaces Opus 5 at a lower price ($4 / $20 per million tokens, against $5 / $25).
+- **Max tokens:** 2,000 leaves room for the model's internal reasoning, so answers aren't cut off halfway. If one is, it counts as an error rather than an answer.
 
 **Alternatives considered.**
 - **A smaller answer model** (Sonnet or Haiku). It would be faster and cheaper, and it is the natural next experiment if the latency or cost criterion fails. Starting from the most capable model answers the first question: can this work at all? After that, the question becomes how cheap it can be.
 - **Higher effort.** Likely more accurate on multi-document questions, but it risks the latency and cost criteria. It is a single environment variable, so it is easy to test on the development split.
 - **Using the answer model as the judge.** Simpler, but it raises the self-grading concern.
 
-**Revisit when** the first live run comes back. If cost or latency fails, compare `claude-sonnet-5` and `claude-haiku-4-5` on the development split. If correctness fails on multi-document cases, try medium effort.
+**Revisit when** the first live run comes back. If cost or latency fails, compare `claude-sonnet-5-5` and `claude-haiku-4-5` on the development split. If correctness fails on multi-document cases, try medium effort.
 
 ## 10. LLM framework: none (no LangChain, LlamaIndex or LiteLLM)
 

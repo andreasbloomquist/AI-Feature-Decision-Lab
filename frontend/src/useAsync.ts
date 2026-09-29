@@ -9,11 +9,14 @@ export interface AsyncState<T> {
 /**
  * Run `load` whenever `key` changes and keep only the latest result.
  *
- * A response that arrives after a newer request has started is ignored, so switching runs or
- * filters quickly can never show data for the wrong selection. Pass `null` as the key to skip loading.
+ * A response that arrives after a newer request has started is ignored, and data loaded for an
+ * earlier key is never returned for the current one, so switching runs, cases or filters can never
+ * show (or act on) data for the wrong selection. Pass `null` as the key to skip loading.
  */
 export function useAsync<T>(key: string | null, load: () => Promise<T>): AsyncState<T> & { reload: () => void } {
-  const [state, setState] = useState<AsyncState<T>>({ data: null, error: null, loading: key !== null });
+  // The settled result, tagged with the key and reload count it was loaded for. Loading state is
+  // derived from those tags rather than set from the effect.
+  const [settled, setSettled] = useState<{ key: string; nonce: number; data: T | null; error: string | null } | null>(null);
   const [nonce, setNonce] = useState(0);
   // `load` is rebuilt on every render; an effect event lets the effect call the latest one
   // while re-running only when `key` changes.
@@ -22,15 +25,20 @@ export function useAsync<T>(key: string | null, load: () => Promise<T>): AsyncSt
   useEffect(() => {
     if (key === null) return;
     let current = true;
-    setState((s) => ({ ...s, loading: true, error: null }));
     runLoad().then(
-      (data) => current && setState({ data, error: null, loading: false }),
-      (e: unknown) => current && setState({ data: null, error: e instanceof Error ? e.message : String(e), loading: false }),
+      (data) => current && setSettled({ key, nonce, data, error: null }),
+      (e: unknown) => current && setSettled({ key, nonce, data: null, error: e instanceof Error ? e.message : String(e) }),
     );
     return () => {
       current = false;
     };
   }, [key, nonce]);
 
-  return { ...state, reload: () => setNonce((n) => n + 1) };
+  const reload = () => setNonce((n) => n + 1);
+  if (key === null) return { data: null, error: null, loading: false, reload };
+  // Data loaded for a different key is never returned; a reload of the same key keeps showing the
+  // previous data (without its error) until the new response arrives.
+  if (settled?.key !== key) return { data: null, error: null, loading: true, reload };
+  const loading = settled.nonce !== nonce;
+  return { data: settled.data, error: loading ? null : settled.error, loading, reload };
 }

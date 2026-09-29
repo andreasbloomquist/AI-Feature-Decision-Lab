@@ -38,13 +38,12 @@ def judge_response(llm: LLMProvider, case: dict, resp: ApproachResponse, corpus:
     try:
         result = llm.generate(system, user, max_tokens=JUDGE_MAX_TOKENS)
     except LLMError as e:
-        return {**base, "verdict": None, "error": f"{e.kind}: {e.message}"}
+        failed = {**base, "verdict": None, "error": f"{e.kind}: {e.message}"}
+        if e.input_tokens is not None and e.output_tokens is not None:
+            failed.update(_usage(llm.model, e.input_tokens, e.output_tokens))
+        return failed
     m = JUDGE_RE.search(result.text or "")
-    usage = {
-        "input_tokens": result.input_tokens,
-        "output_tokens": result.output_tokens,
-        "estimated_cost_usd": estimate_cost_usd(result.model, result.input_tokens, result.output_tokens),
-    }
+    usage = _usage(result.model, result.input_tokens, result.output_tokens)
     if not m:
         return {**base, **usage, "verdict": None, "error": "unparseable judge output", "raw": result.text}
     support = m.group(2).lower()
@@ -55,4 +54,12 @@ def judge_response(llm: LLMProvider, case: dict, resp: ApproachResponse, corpus:
         "citations_support": None if support == "n/a" else support == "yes",
         "rationale": m.group(3).strip(),
         "error": None,
+    }
+
+
+def _usage(model: str, input_tokens: int | None, output_tokens: int | None) -> dict:
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "estimated_cost_usd": estimate_cost_usd(model, input_tokens, output_tokens),
     }

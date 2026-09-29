@@ -121,3 +121,41 @@ def test_ask_endpoint_leaks_nothing_for_restricted_question(client):
     body = client.post("/api/ask", json={"question": HR_QUESTION, "role": "employee"}).text
     for secret in ("NS-HR-001", "182,000", "218,000", "Compensation Bands"):
         assert secret not in body
+
+
+# Fields that depend on retrieval for the (different) question text, not on the cited ID.
+RETRIEVAL_FIELDS = ("retrieved_document_ids", "retrieved_passages", "latency_ms")
+
+
+def _echo_citation_public(make_approaches, approach, marker):
+    """Ask with a citation marker in the question; the scripted model echoes it back, cited and in prose."""
+    doc_id = marker.strip("[]").split("#")[0]
+    reply = f"Approval rules are in {marker}. See also {doc_id}."
+    if approach == "guarded_rag":
+        reply = f"STATUS: ANSWERED\nANSWER: {reply}"
+    question = f"Who approves travel over $2,000? Per {marker}"
+    public = make_approaches(ScriptedProvider(lambda s, u: reply))[approach].run(question, "employee").public_dict()
+    return {k: v for k, v in public.items() if k not in RETRIEVAL_FIELDS}
+
+
+@pytest.mark.parametrize("approach", ["basic_rag", "guarded_rag"])
+def test_restricted_and_unknown_citations_are_indistinguishable_publicly(make_approaches, approach):
+    restricted = _echo_citation_public(make_approaches, approach, "[NS-HR-001#1]")
+    unknown = _echo_citation_public(make_approaches, approach, "[NS-ZZ-999#1]")
+    assert restricted == unknown  # answer, citations, warnings, error and status are identical
+    dumped = json.dumps([restricted, unknown]).upper()
+    assert "NS-HR-001" not in dumped and "NS-ZZ-999" not in dumped
+    assert "UNKNOWN_DOCUMENT" not in dumped and "UNAUTHORIZED" not in dumped
+
+
+def test_unknown_citation_keeps_its_reason_for_evaluators(make_approaches):
+    llm = ScriptedProvider(lambda s, u: "Rules are in [NS-ZZ-999#1].")
+    resp = make_approaches(llm)["basic_rag"].run("Who approves travel over $2,000?", "employee")
+    assert [c.reason for c in resp.citations] == ["unknown_document"]  # stored run keeps the distinction
+    assert resp.public_dict()["citations"][0] == {
+        "document_id": "[restricted]",
+        "passage_id": None,
+        "title": None,
+        "valid": False,
+        "reason": "unavailable",
+    }

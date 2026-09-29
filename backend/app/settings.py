@@ -34,9 +34,9 @@ def _load_dotenv() -> None:
 @dataclass
 class Settings:
     provider: str = "anthropic"
-    model: str = "claude-opus-5"
+    model: str = "claude-opus-5-5"
     effort: str | None = "low"
-    judge_model: str = "claude-sonnet-5"
+    judge_model: str = "claude-sonnet-5-5"
     timeout_s: float = 20.0
     max_retries: int = 1
     db_path: Path = field(default_factory=lambda: RESULTS_DIR / "lab.sqlite3")
@@ -64,9 +64,9 @@ def load_settings() -> Settings:
     effort = os.environ.get("LLM_EFFORT", "low").strip()
     return Settings(
         provider=os.environ.get("LLM_PROVIDER", "anthropic").strip().lower(),
-        model=os.environ.get("LLM_MODEL", "claude-opus-5").strip(),
+        model=os.environ.get("LLM_MODEL", "claude-opus-5-5").strip(),
         effort=effort or None,
-        judge_model=os.environ.get("JUDGE_MODEL", "claude-sonnet-5").strip(),
+        judge_model=os.environ.get("JUDGE_MODEL", "claude-sonnet-5-5").strip(),
         timeout_s=float(os.environ.get("LLM_TIMEOUT_S", "20")),
         max_retries=int(os.environ.get("LLM_MAX_RETRIES", "1")),
         db_path=Path(os.environ.get("LAB_DB_PATH", str(RESULTS_DIR / "lab.sqlite3"))),

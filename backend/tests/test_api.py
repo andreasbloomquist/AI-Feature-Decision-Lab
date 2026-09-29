@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from app import main
@@ -57,7 +58,7 @@ def test_review_preserves_automated_score(client):
 
     r = client.post(
         f"/api/responses/{target['response_id']}/reviews",
-        json={"verdict": "incorrect", "note": "Says VP approval is needed; contradicts 2026 policy."},
+        json={"verdict": "incorrect", "note": "Says VP approval is needed; contradicts 2026 policy.", "reviewer": "pm"},
     )
     assert r.status_code == 200
     assert r.json()["automated_grade"] == before_grade
@@ -118,3 +119,69 @@ def test_no_secret_in_any_response_database_or_export(tmp_path, monkeypatch):
             assert secret not in text and "sk-ant" not in text
     finally:
         main.reset_caches()
+
+
+@pytest.mark.parametrize("question", ["   ", "  hi  ", "\n\t \n"])
+def test_whitespace_only_question_is_rejected(client, question):
+    assert client.post("/api/ask", json={"question": question, "role": "employee"}).status_code == 422
+
+
+def test_review_does_not_export_a_running_run(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "RESULTS_DIR", tmp_path / "results")
+    db = main.get_db()
+    fixture_run = db.get_run(client.get("/api/runs").json()[0]["run_id"])
+    run_id = "live-still-running"
+    db.create_run({**fixture_run, "run_id": run_id, "mode": "live", "status": "running"})
+    response_id = db.add_response(run_id, "S02", "search", {"status": "answered"}, {}, None)
+    r = client.post(f"/api/responses/{response_id}/reviews", json={"verdict": "correct", "reviewer": "pm"})
+    assert r.status_code == 200
+    assert not (tmp_path / "results" / "runs" / f"{run_id}.json").exists()
+    db.finish_run(run_id, "completed", {})
+    client.post(f"/api/responses/{response_id}/reviews", json={"verdict": "incorrect", "reviewer": "pm"})
+    assert (tmp_path / "results" / "runs" / f"{run_id}.json").exists()
+
+
+def test_runs_endpoint_marks_only_the_decision_run_as_latest(client):
+    runs = client.get("/api/runs").json()
+    assert all("latest" in r for r in runs)
+    # Only fixture runs exist in the test database, so no run is the live decision run.
+    assert not any(r["latest"] for r in runs if r["mode"] == "fixture")
+
+
+@pytest.mark.parametrize("reviewer", [None, "", "   "])
+def test_review_requires_a_reviewer(client, reviewer):
+    run_id = client.get("/api/runs").json()[0]["run_id"]
+    response_id = client.get(f"/api/runs/{run_id}/cases").json()[0]["response_id"]
+    body = {"verdict": "correct"} if reviewer is None else {"verdict": "correct", "reviewer": reviewer}
+    assert client.post(f"/api/responses/{response_id}/reviews", json=body).status_code == 422
+
+
+def test_decision_and_memo_disclose_human_overrides(client):
+    from app.decision import human_override_note
+
+    before = client.get("/api/decision").json()["decision"]
+    assert human_override_note(before) is None
+    run_id = before["run_id"]
+
+    def answerable_row(approach):
+        rows = client.get(f"/api/runs/{run_id}/cases", params={"approach": approach, "split": "held_out"}).json()
+        return next(r for r in rows if r["answerability"] == "answerable" and r["final_label"] == "correct")
+
+    def review(row, verdict):
+        client.post(f"/api/responses/{row['response_id']}/reviews", json={"verdict": verdict, "reviewer": "pm"})
+        return client.get("/api/decision").json()["decision"]
+
+    # Agreeing with the automated label is a confirmation, not an override.
+    target_row = answerable_row("guarded_rag")
+    confirmed = review(target_row, "correct")
+    assert confirmed["approaches"]["guarded_rag"]["human_reviews"] == {"reviewed": 1, "changed": 0}
+    assert human_override_note(confirmed) is None
+
+    # Reviews that flip the baseline's labels move the lift, so they are disclosed too.
+    flipped = review(answerable_row("search"), "incorrect")
+    note = human_override_note(flipped)
+    assert "1 of 35 for Search" in note and "1 more review(s) confirmed" in note
+    assert "Guarded RAG" not in note
+
+    changed = review(target_row, "incorrect")
+    assert "1 of 35 for Guarded RAG" in human_override_note(changed)

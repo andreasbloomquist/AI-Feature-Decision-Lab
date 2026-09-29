@@ -23,6 +23,7 @@ class FakeMessages(BaseHTTPRequestHandler):
         user = body["messages"][0]["content"]
         if "SLOW" in user:
             time.sleep(1.5)
+        stop_reason = "max_tokens" if "TRUNCATE" in user else "end_turn"
         if "NOUSAGE" in user:
             payload = {
                 "id": "msg_2",
@@ -41,7 +42,7 @@ class FakeMessages(BaseHTTPRequestHandler):
                 "role": "assistant",
                 "model": body["model"],
                 "content": [{"type": "text", "text": "STATUS: ANSWERED\nANSWER: hi [NS-TRV-2026#3]"}],
-                "stop_reason": "end_turn",
+                "stop_reason": stop_reason,
                 "stop_sequence": None,
                 "usage": {"input_tokens": 1200, "output_tokens": 150},
             }
@@ -70,13 +71,13 @@ def fake_api(monkeypatch):
 
 
 def test_provider_records_usage_and_sends_config(fake_api):
-    p = AnthropicProvider(Settings(model="claude-opus-5", effort="low", timeout_s=5, max_retries=0))
+    p = AnthropicProvider(Settings(model="claude-opus-5-5", effort="low", timeout_s=5, max_retries=0))
     r = p.generate("sys", "question", max_tokens=500)
     assert r.text.startswith("STATUS: ANSWERED")
     assert (r.input_tokens, r.output_tokens) == (1200, 150)
     assert r.latency_ms is not None
     body = REQUESTS[0]["body"]
-    assert body["model"] == "claude-opus-5" and body["system"] == "sys" and body["max_tokens"] == 500
+    assert body["model"] == "claude-opus-5-5" and body["system"] == "sys" and body["max_tokens"] == 500
     assert body["output_config"] == {"effort": "low"}
 
 
@@ -91,3 +92,25 @@ def test_provider_timeout_becomes_llm_error(fake_api):
         p.generate("sys", "SLOW question", max_tokens=10)
     assert e.value.kind == "timeout" and e.value.latency_ms is not None
     assert "sk-test" not in str(e.value)
+
+
+def test_truncated_output_becomes_llm_error(fake_api):
+    p = AnthropicProvider(Settings(timeout_s=5, max_retries=0))
+    with pytest.raises(LLMError) as e:
+        p.generate("sys", "TRUNCATE question", max_tokens=10)
+    assert e.value.kind == "truncated" and e.value.latency_ms is not None
+
+
+def test_truncated_output_error_keeps_token_usage(fake_api):
+    p = AnthropicProvider(Settings(timeout_s=5, max_retries=0))
+    with pytest.raises(LLMError) as e:
+        p.generate("sys", "TRUNCATE question", max_tokens=10)
+    assert (e.value.input_tokens, e.value.output_tokens) == (1200, 150)
+
+
+def test_truncated_approach_response_records_tokens_and_cost(fake_api, make_approaches):
+    p = AnthropicProvider(Settings(model="claude-opus-5-5", timeout_s=5, max_retries=0))
+    resp = make_approaches(p)["basic_rag"].run("TRUNCATE Who approves travel over $2,000?", "employee")
+    assert resp.status == "error" and resp.error.startswith("truncated")
+    assert (resp.input_tokens, resp.output_tokens) == (1200, 150)
+    assert resp.estimated_cost_usd is not None and resp.estimated_cost_usd > 0

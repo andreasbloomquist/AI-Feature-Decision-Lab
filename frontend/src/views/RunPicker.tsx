@@ -13,7 +13,12 @@ export function runLabel(r: RunSummary): string {
  * otherwise the newest fixture run. A development-only tuning run never hides the last full result.
  */
 export function defaultRunId(runs: RunSummary[], split = "held_out"): string | null {
-  const live = runs.find((r) => r.mode === "live" && r.status.startsWith("completed") && r.splits.includes(split));
+  // For the held-out split, use the run the backend decides on (it may be none, e.g. when every live
+  // run was dominated by errors). Otherwise take the newest complete, non-partial live run.
+  const backendMarks = split === "held_out" && runs.some((r) => r.latest !== undefined);
+  const live = backendMarks
+    ? runs.find((r) => r.latest)
+    : runs.find((r) => r.mode === "live" && r.status.startsWith("completed") && !r.partial && r.splits.includes(split));
   return (live ?? runs.find((r) => r.mode === "fixture") ?? runs[0])?.run_id ?? null;
 }
 

@@ -4,7 +4,7 @@ import { ErrorNotice, Loading } from "../components/Notice";
 import { StateBadge } from "../components/StatusBadge";
 import { APPROACHES, APPROACH_LABELS, msText, pct, usdText } from "../format";
 import { href, navigate } from "../router";
-import type { Criterion } from "../types";
+import type { Criterion, DecisionResponse } from "../types";
 import { useAsync } from "../useAsync";
 import { RunPicker, useRuns } from "./RunPicker";
 
@@ -16,12 +16,44 @@ function fmt(unit: Criterion["unit"], v: number | null): string {
   return String(v);
 }
 
+/** Extra precision, used when rounding would make a failing value look equal to its threshold. */
+function fmtPrecise(unit: Criterion["unit"], v: number): string {
+  if (unit === "rate") return pct(v, 2);
+  if (unit === "ms") return `${Math.round(v).toLocaleString()} ms`;
+  if (unit === "usd") return `$${v.toFixed(5)}`;
+  return String(v);
+}
+
 function measured(c: Criterion): string {
   if (c.state === "insufficient" && c.value === null) return "not measured";
-  const base = fmt(c.unit, c.value);
+  let base = fmt(c.unit, c.value);
+  if (c.state === "fail" && c.value !== null && base === fmt(c.unit, c.threshold)) base = fmtPrecise(c.unit, c.value);
   if (c.unit === "rate" && c.numerator !== undefined) return `${base} (${c.numerator}/${c.n})`;
   if (c.n !== null) return `${base} (n=${c.n})`;
   return base;
+}
+
+/**
+ * Says when human reviews changed correctness labels of the target (the verdict) or the baseline (the lift).
+ * Reviews that agree with the automated label are confirmations and are only counted. Mirrors the backend's
+ * `human_override_note`, which writes the same sentence into the memo.
+ */
+function humanOverrides(d: NonNullable<DecisionResponse["decision"]>): string | null {
+  const approaches = [...new Set([d.target_approach, ...(d.comparison ? [d.comparison.baseline] : [])])];
+  const parts: string[] = [];
+  let confirmed = 0;
+  for (const a of approaches) {
+    const entry = d.approaches[a];
+    const reviews = entry?.human_reviews;
+    if (!reviews) continue;
+    const s = entry.label_sources;
+    const total = s ? s.human + s.model_judge + s.deterministic : 0;
+    confirmed += reviews.reviewed - reviews.changed;
+    if (reviews.changed) parts.push(`${reviews.changed} of ${total} for ${APPROACH_LABELS[a]}`);
+  }
+  if (!parts.length) return null;
+  const more = confirmed ? ` ${confirmed} more review(s) confirmed the automated label.` : "";
+  return `Human review changed correctness labels: ${parts.join("; ")}.${more} Check those reviews in Inspect before relying on this verdict or the comparison.`;
 }
 
 export function DecisionView({ runParam }: { runParam: string | null }) {
@@ -30,8 +62,13 @@ export function DecisionView({ runParam }: { runParam: string | null }) {
   const [showAll, setShowAll] = useState(false);
 
   if (result.error) {
+    // Keep the run picker so a stale or unknown run in the URL is never a dead end.
     return (
       <div className="view">
+        <div className="toolbar">
+          <RunPicker runs={runs.data ?? []} value={runParam} onChange={(id) => navigate("decision", { run: id })} />
+          {runParam && <a href={href("decision")}>Use the latest run</a>}
+        </div>
         <ErrorNotice error={result.error} onRetry={result.reload} />
       </div>
     );
@@ -92,7 +129,7 @@ export function DecisionView({ runParam }: { runParam: string | null }) {
             <p>{d.recommendation.summary}</p>
             {d.comparison && !isFixture && (
               <p className="small">
-                Versus search: correctness {d.comparison.target_correct} vs {d.comparison.baseline_correct}
+                Versus {APPROACH_LABELS[d.comparison.baseline] ?? d.comparison.baseline}: correctness {d.comparison.target_correct} vs {d.comparison.baseline_correct}
                 {d.comparison.correctness_lift_pp !== null && ` (${d.comparison.correctness_lift_pp > 0 ? "+" : ""}${d.comparison.correctness_lift_pp} points)`} · p95{" "}
                 {msText(d.comparison.target_p95_ms)} vs {msText(d.comparison.baseline_p95_ms)} · cost per question {usdText(d.comparison.target_cost_per_question)} vs{" "}
                 {usdText(d.comparison.baseline_cost_per_question)}.
@@ -100,10 +137,18 @@ export function DecisionView({ runParam }: { runParam: string | null }) {
             )}
             {isFixture && d.comparison && (
               <p className="small muted">
-                For illustration only: fixture correctness {d.comparison.target_correct} (guarded) vs {d.comparison.baseline_correct} (search, real).
+                For illustration only: fixture correctness {d.comparison.target_correct} ({APPROACH_LABELS[d.comparison.target] ?? d.comparison.target}) vs{" "}
+                {d.comparison.baseline_correct} ({APPROACH_LABELS[d.comparison.baseline] ?? d.comparison.baseline}
+                {d.comparison.baseline === "search" ? ", real" : ""}).
               </p>
             )}
           </section>
+
+          {humanOverrides(d) && (
+            <div className="notice notice-warn" role="note">
+              <strong>Human overrides.</strong> {humanOverrides(d)}
+            </div>
+          )}
 
           <section className="panel">
             <div className="section-head">
@@ -135,7 +180,7 @@ export function DecisionView({ runParam }: { runParam: string | null }) {
                         <td key={a} className="criterion-cell">
                           <StateBadge state={cc.state} demo={isFixture} />
                           <div className="small">{measured(cc)}</div>
-                          {cc.confidence === "low" && <div className="muted tiny-text">95% CI {pct(cc.ci_low)}–{pct(cc.ci_high)} crosses the threshold</div>}
+                          {cc.confidence === "low" && <div className="muted tiny-text">95% CI {pct(cc.ci_low, 1)}–{pct(cc.ci_high, 1)} crosses the threshold</div>}
                           {cc.reason && <div className="muted tiny-text">{cc.reason}</div>}
                           {cc.state === "fail" && cc.example_case_ids.length > 0 && (
                             <div className="examples tiny-text">

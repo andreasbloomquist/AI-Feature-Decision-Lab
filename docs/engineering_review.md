@@ -1,8 +1,12 @@
 # Engineering review
 
-A principal-engineer review of the whole repository, done after the first complete build. It records what was found, how each problem was fixed, and which test now guards against it. It also lists what is still open.
+Principal-engineer reviews of the repository, oldest first. Each records what was found, how each problem was fixed, and which test now guards against it. The [first](#first-review) and [second](#second-review) reviews covered the whole codebase; the [third](#third-review) covered the code the second one added. [Known limitations](#known-limitations-and-next-steps) lists what is still open.
 
-## How the review was done
+## First review
+
+Done after the first complete build.
+
+### How the review was done
 
 - **Independent reviewers.** Two reviewers read the code without context from the author. One covered backend correctness, security and tests. The other covered the frontend, documentation, and whether the docs matched the code.
 - **Author's own pass.** The author reviewed alongside them, looking for layering and duplication problems.
@@ -19,11 +23,11 @@ A principal-engineer review of the whole repository, done after the first comple
 | CI | tests only | lint, tests on Python 3.10 and 3.12, frontend checks, production build |
 | Lint suppressions | 4 | 0 |
 
-## Findings and fixes
+### Findings and fixes
 
 Severity key: **Critical** means a secret or restricted data can leak. **High** means wrong results or a broken core path. **Medium** means a correctness risk or a maintainability problem a senior reviewer would block on. **Low** means polish.
 
-### Security and access control
+#### Security and access control
 
 | # | Severity | Finding | Fix | Regression test |
 |---|---|---|---|---|
@@ -33,7 +37,7 @@ Severity key: **Critical** means a secret or restricted data can leak. **High** 
 | 4 | Medium | **Existence oracle.** A restricted document returned 403 and a missing one returned 404, so a user could probe for restricted IDs. | Both return the same 404 body. | `test_preview_endpoint_enforces_role` |
 | 5 | Medium | **The secret-leak test had gaps.** It skipped `/api/ask`, the case detail endpoint and the exported run files. | The test now covers every endpoint, the SQLite file and a JSON export. | `test_no_secret_in_any_response_database_or_export` |
 
-### Evaluation correctness
+#### Evaluation correctness
 
 | # | Severity | Finding | Fix | Regression test |
 |---|---|---|---|---|
@@ -43,7 +47,7 @@ Severity key: **Critical** means a secret or restricted data can leak. **High** 
 | 9 | Medium | **One transient error blocked the cost verdict.** A single timeout with no token usage made cost "insufficient evidence" for the whole run. | Latency and cost are judged on the measured cases when at least 90% of cases are measured (`min_measurement_coverage`). Missing usage is still never counted as $0. | `test_one_unmeasured_case_does_not_block_cost_and_latency`, `test_cost_and_latency_need_minimum_measurement_coverage` |
 | 10 | Low | **Wrong passage for document-level citations.** Passage IDs were sorted as strings, so `#10` came before `#2`. | Sorted numerically. | `test_document_level_citation_uses_numeric_passage_order` |
 
-### Frontend
+#### Frontend
 
 | # | Severity | Finding | Fix | Regression test |
 |---|---|---|---|---|
@@ -53,7 +57,7 @@ Severity key: **Critical** means a secret or restricted data can leak. **High** 
 | 14 | Medium | **Deep links lost state.** Changing a filter dropped the selected approach. "Try this question in Ask" didn't carry the question. Compare's split wasn't in the URL. | Every Inspect link keeps all parameters. Ask reads `q` and `role` from the URL. The split is part of the Compare URL. | `keeps every filter in row links, so deep links survive navigation` |
 | 15 | Medium | **Lint suppressions with no linter.** Four `eslint-disable` comments hid real stale-closure bugs. | ESLint added. The suppressions were removed and the dependencies fixed; `useEffectEvent` replaces the one legitimate case. | `make lint` in CI |
 
-### Code quality
+#### Code quality
 
 | # | Severity | Finding | Fix |
 |---|---|---|---|
@@ -64,7 +68,7 @@ Severity key: **Critical** means a secret or restricted data can leak. **High** 
 | 20 | Low | **Dead code.** An unused parameter, an unused constant, an unused result field, and a `sys.path` hack in tests. | Removed; pytest now uses `pythonpath`. |
 | 21 | Low | **SQLite robustness.** Foreign keys were not enforced, and there was no busy timeout for concurrent CLI and server use. | Foreign keys, WAL mode and a busy timeout on every connection. |
 
-### Documentation
+#### Documentation
 
 | # | Finding | Fix |
 |---|---|---|
@@ -73,6 +77,81 @@ Severity key: **Critical** means a secret or restricted data can leak. **High** 
 | 24 | The README and demo script presented fixture behaviour ("Basic RAG invents answers") as findings. | Reframed as hypotheses and illustrations. Screenshots are captioned as demo data. |
 | 25 | The decision log cited "the spec", which isn't in the repo. | The requirements are now listed in the [PRD](PRD.md#requirements) (R1 to R10), and the decision log cites them by number. |
 | 26 | The README said search citations "can't be invalid", but the report shows search at 84% citation validity. | Clarified: a search citation always points at a real passage, but the passage may come from the wrong policy. |
+
+## Second review
+
+Done four days after the first, by two independent reviewers (backend; frontend) with no context from the earlier fixes, plus the author's own pass over model configuration and the docs. The focus was whether the **decision** could be wrong: could a run, a grade or a label make the lab propose something the evidence doesn't support?
+
+| | Before | After |
+|---|---|---|
+| Backend tests | 97 | 137 |
+| Frontend tests | 20 | 29 |
+| React hooks lint rules | 2 | the full recommended set |
+
+### Decision integrity
+
+| # | Severity | Finding | Fix | Regression test |
+|---|---|---|---|---|
+| 27 | High | **A disclosure could read "insufficient evidence".** Access safety went through the minimum-sample check, so one leak in a small run never triggered "do not launch". | A disclosure fails access safety at any sample size. | `test_single_disclosure_fails_access_safety_below_min_sample_size` |
+| 28 | High | **A run broken by the provider got a quality verdict.** With a bad key or an outage, every call failed, the run became "latest", and the lab proposed "do not launch yet" for correctness, hiding the previous good run. | New data-quality gate `max_error_rate` (0.2) in launch criteria 1.1.0, added before any live run existed. Above it, the proposal is "insufficient evidence: run dominated by errors", and the run is never chosen as latest. Runs stored without the key use 0.2. | `test_error_dominated_run_is_insufficient_evidence_not_a_quality_verdict`, `test_error_dominated_run_does_not_hide_previous_good_run`, `test_max_error_rate_defaults_to_0_2_for_runs_stored_without_it` |
+| 29 | High | **A debug run replaced the real result.** `--case M01` stored both splits, became the latest run, and the Decision view showed 0 cases. | Runs store the splits they actually cover and a `partial` flag. Partial runs, and runs without the target approach, are never the default. `/api/runs` marks the decision run as `latest`, so the UI follows the same rule. | `test_case_limited_run_stores_covered_splits_and_partial_flag`, `test_latest_runs_skips_partial_runs`, `skips partial debug runs, and follows the backend's latest flag` (frontend) |
+| 30 | Medium | **A correct answer that leaked restricted content counted as a success**, so it never appeared in the report's failure lists. | A disclosure is never a success. | `test_correct_answer_with_restricted_fact_never_succeeds` |
+| 31 | Medium | **Guard-withheld answers were counted as provider errors.** Guarded RAG doing its job on an unanswerable question failed abstention quality and marked the run "completed with errors". | A withheld answer is a decline on unanswerable and access-denied cases and stays a miss on answerable ones. Error counts are split into `provider` and `withheld`. | `test_withheld_answer_is_a_decline_on_unanswerable_and_access_denied_cases`, `test_withheld_answer_stays_a_miss_on_answerable_cases`, `test_withheld_answers_do_not_mark_run_completed_with_errors` |
+| 32 | Medium | **Truncated answers were graded as complete.** A reply cut off at `max_tokens` could drop a caveat or citation and still pass. | `stop_reason == "max_tokens"` becomes a `truncated` error, and the tokens it used are still recorded, so cost isn't biased low. | `test_truncated_output_becomes_llm_error`, `test_truncated_approach_response_records_tokens_and_cost` |
+| 33 | Medium | **Repeating a word gamed retrieval.** Duplicate query terms multiplied the BM25 score, so "office office office…" pushed an unanswerable question over search's threshold and the guarded retrieval floor. | Query terms are de-duplicated. Search's answer to M10 moved from incorrect to partial; held-out rates are unchanged. | `test_repeating_a_query_word_does_not_change_the_score`, `test_repeated_words_cannot_push_a_question_over_the_retrieval_floor` |
+| 34 | Low | Next-experiment advice was given for criteria that were never measured; the limitations list read today's dataset rather than the run's; p50 was interpolated while the report said nearest-rank. | Advice only for failed criteria; limitations use the run's snapshot and survive an empty split; p50 uses nearest rank. | `test_next_experiments_only_for_failed_criteria_not_insufficient`, `test_decision_limitations_come_from_run_snapshot_not_todays_dataset`, `test_p50_is_nearest_rank_like_p95` |
+
+### Security
+
+| # | Severity | Finding | Fix | Regression test |
+|---|---|---|---|---|
+| 35 | Medium | **Existence oracle through Ask.** A restricted ID in a citation became `[restricted]`, but a nonexistent ID was echoed back, and warnings said "unauthorized" versus "unknown document". Asking the model to cite both told a user which IDs exist. | Unknown and restricted documents look identical in every public field: same placeholder, same reason. Evaluators still see the real reason. | `test_restricted_and_unknown_citations_are_indistinguishable_publicly`, `test_unknown_citation_keeps_its_reason_for_evaluators` |
+| 36 | Low | A whitespace-only question passed validation; a review could export a run that was still being written, non-atomically. | Questions are stripped before validation; exports are atomic and skipped while a run is running. | `test_whitespace_only_question_is_rejected`, `test_export_run_is_atomic`, `test_review_does_not_export_a_running_run` |
+
+### Frontend
+
+| # | Severity | Finding | Fix | Regression test |
+|---|---|---|---|---|
+| 37 | High | **Inspect could save a review against the wrong run.** The data hook kept the previous selection's data when the key changed, so after switching runs, the old run's case, with a live review form, stayed on screen. | Data is tagged with the key it was loaded for and never returned for another. Reloading the same selection keeps it on screen. | `never returns data loaded for a previous key`, `keeps the current data on screen while reloading the same key` |
+| 38 | Medium | A stale run link was a dead end on the Decision view; a crafted run ID (`..%2Fdecision`) fetched another endpoint and blanked the app. | The run picker and a "use the latest run" link stay on error; path segments are encoded; an error boundary catches render errors per route. | `keeps the run picker and a way back to the latest run`, `shows a message instead of a blank page when a view throws` |
+| 39 | Medium | Rounding contradicted verdicts: a 79.5% lower bound showed as "80%", and a failing $0.02004 showed as "$0.020". | Intervals to one decimal; extra precision when a failing value rounds to its threshold; a measured cost is never shown as $0. | `never shows a measured, nonzero cost as zero` |
+| 40 | Low | Unknown role in a deep link displayed "Employee" but sent the bogus role; "No live evaluation yet" shown when the run list failed to load; hardcoded "Versus search"; the source drawer stayed open across navigation; unnamed citation chips and an incomplete tabs pattern. | Each fixed at the source. | `sends the role it shows, falling back to Employee` |
+
+### Label integrity (from the product review)
+
+| # | Severity | Finding | Fix | Regression test |
+|---|---|---|---|---|
+| 42 | High | **Human reviews could silently move a verdict.** Reviews override the automated label in every metric, but nothing showed that they had; the form defaulted to "Correct" and the reviewer name was optional. Two anonymous clicks moved held-out correctness from 32/35 to 34/35. | The Decision view and the memo say how many of the target's correctness labels come from human review. A review needs an explicit verdict and a reviewer name (the API rejects a missing or blank one). | `test_decision_and_memo_disclose_human_overrides`, `test_review_requires_a_reviewer`, `says when the verdict rests on human-reviewed labels`, `needs an explicit verdict and a reviewer name` (frontend) |
+
+### Configuration
+
+| # | Finding | Fix |
+|---|---|---|
+| 41 | The default answer model was Claude Opus 5, now superseded by Claude Opus 5.5 at a lower price; Claude Sonnet 5.5 had no price entry. | Defaults are `claude-opus-5-5` (effort still set explicitly to `low`, since Opus 5.5 defaults to `medium`) and `claude-sonnet-5-5` for the judge; see [decision 9](decisions.md#9-models-and-settings). |
+
+### Documentation
+
+The README now explains why the lab matters and what it does and doesn't do for a product manager. It also has a full local-run guide with a working API example, troubleshooting, configuration, and how to adapt the lab to another feature. A new [guide for product managers](for_product_managers.md) covers the decision workflow. An independent product review with a prioritized roadmap is in [product_review.md](product_review.md).
+
+## Third review
+
+This round reviewed the code that the second review and the product review had added (PR #1). The reviewer was independent and had no context from the author. It found no High issues. Every finding was reproduced before it was fixed, and each regression test was checked to fail without its fix.
+
+| | Before | After |
+|---|---|---|
+| Backend tests | 137 | 138 |
+| Frontend tests | 29 | 32 |
+
+| # | Severity | Finding | Fix | Regression test |
+|---|---|---|---|---|
+| 43 | Medium | **Reviews of the baseline moved the comparison without notice.** Five reviews of Search answers moved the lift from +28.6 to +42.9 points, and the override notice stayed silent because it counted only the target. | The notice and the memo cover both the target (which drives the verdict) and the baseline (which drives the lift). | `test_decision_and_memo_disclose_human_overrides` |
+| 44 | Medium | **A confirming review was reported as an override.** A reviewer agreeing with the automated label still triggered "overriding the automated grade", so the warning would fire on routine confirmations and people would learn to ignore it. | Metrics count `human_reviews.reviewed` and `human_reviews.changed`. Only changed labels trigger the notice; confirmations are counted alongside. | `test_decision_and_memo_disclose_human_overrides`, `stays quiet when reviews only confirm the automated labels` (frontend) |
+| 45 | Medium | **`/api/runs` re-graded every skipped run on every request.** Choosing the decision run loaded and summarized every newer unusable run, on every page load (151 ms with 20 skipped runs). | A completed run's usability is computed once, from the target approach's rows only, and cached. It can't change afterwards: reviews change labels, never provider errors. | `test_run_usability_is_computed_once_per_completed_run` |
+| 46 | Medium | **The source drawer reopened after navigating away and back.** It was hidden on other routes, not closed. | The drawer is cleared when the route changes. | `closes for good when you navigate away, and doesn't reopen when you come back` |
+| 47 | Low | A malformed document response in the source drawer blanked the app, because the drawer sat outside the error boundary. The boundary also had no way to retry on the landing route. | The drawer has its own boundary, and the boundary has a "Try again" button. | `offers Try again, which re-renders the view` |
+| 48 | Low | The review form said notes are "still recorded" on non-answerable cases, but it needed a verdict that has no effect there. | The copy now says the verdict is recorded but changes no metric. Making the verdict optional would need a schema migration; not worth it for this. | — |
+| 49 | Low | API validation errors reached the UI as "The request was not valid." with no reason. | The first field and its message are shown. | — |
+| 50 | Low | The second review's backend test count was off by one. | Corrected. | — |
 
 ## Known limitations and next steps
 

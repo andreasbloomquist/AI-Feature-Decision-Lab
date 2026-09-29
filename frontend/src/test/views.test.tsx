@@ -25,6 +25,13 @@ describe("defaultRunId", () => {
     const runs = [run({ run_id: "dev-only", splits: ["development"] }), run({ run_id: "full" }), run({ run_id: "fx", mode: "fixture" })];
     expect(defaultRunId(runs)).toBe("full");
   });
+  it("skips partial debug runs, and follows the backend's latest flag when present", () => {
+    expect(defaultRunId([run({ run_id: "debug", partial: true }), run({ run_id: "full" })])).toBe("full");
+    const flagged = [run({ run_id: "broken", latest: false }), run({ run_id: "good", latest: true })];
+    expect(defaultRunId(flagged)).toBe("good");
+    const noneUsable = [run({ run_id: "broken", latest: false }), run({ run_id: "fx", mode: "fixture", latest: false })];
+    expect(defaultRunId(noneUsable)).toBe("fx");
+  });
   it("falls back to the fixture run when there is no live run", () => {
     expect(defaultRunId([run({ run_id: "fx", mode: "fixture" })])).toBe("fx");
     expect(defaultRunId([])).toBeNull();

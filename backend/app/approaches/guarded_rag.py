@@ -14,11 +14,11 @@ from __future__ import annotations
 import re
 import time
 
-from ..access import can_access
 from ..citations import (
+    HIDDEN_REASONS,
     RESTRICTED,
+    hidden_mentions,
     malformed_markers,
-    mentioned_document_ids,
     parse_citation_markers,
     validate_all,
 )
@@ -42,11 +42,11 @@ def validation_failures(answer: str, citations: list[Citation], corpus: Corpus, 
 
     Naming an accessible document in prose is fine (the 2026 travel policy itself says it replaces
     NS-TRV-2025), but naming a document the role may not read is a disclosure, however it is written.
+    A nonexistent corpus-style ID is handled exactly like a restricted one, so the two cannot be told apart.
     """
     failures = [f"{c.document_id} ({c.reason})" for c in citations if not c.valid]
     failures += ["malformed citation"] * len(malformed_markers(answer))
-    restricted_mentions = {d for d in mentioned_document_ids(answer, corpus) if not can_access(role, corpus.get(d))}
-    if restricted_mentions and not any(c.reason == "unauthorized" for c in citations):
+    if hidden_mentions(answer, corpus, role) and not any(c.reason in HIDDEN_REASONS for c in citations):
         failures.append(f"{RESTRICTED} (named in the answer)")
     return failures
 

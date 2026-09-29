@@ -13,6 +13,9 @@ export function AskView({ initialQuestion, initialRole }: { initialQuestion: str
   const config = useConfig();
   const [question, setQuestion] = useState(initialQuestion ?? DEFAULT_QUESTION);
   const [role, setRole] = useState(initialRole ?? "employee");
+  // A deep link can carry any role string; fall back to Employee rather than show one role and send another.
+  const roles = config?.roles ?? [];
+  const effectiveRole = roles.length && !roles.some((r) => r.id === role) ? "employee" : role;
   const [selected, setSelected] = useState<ApproachId[]>([...APPROACHES]);
   const [results, setResults] = useState<{ question: string; role: string; responses: ApproachResponse[] } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -20,7 +23,7 @@ export function AskView({ initialQuestion, initialRole }: { initialQuestion: str
   const samples = useAsync("samples", api.samples);
   const latestRequest = useRef(0);
 
-  const submit = async (q = question, r = role) => {
+  const submit = async (q = question, r = effectiveRole) => {
     if (q.trim().length < 3 || !selected.length) return;
     const requestId = ++latestRequest.current;
     setLoading(true);
@@ -55,8 +58,8 @@ export function AskView({ initialQuestion, initialRole }: { initialQuestion: str
           <div className="ask-controls">
             <label className="inline-field">
               <span className="field-label">Asking as</span>
-              <select value={role} onChange={(e) => setRole(e.target.value)}>
-                {(config?.roles ?? []).map((r) => (
+              <select value={effectiveRole} onChange={(e) => setRole(e.target.value)}>
+                {roles.map((r) => (
                   <option key={r.id} value={r.id}>{r.label}</option>
                 ))}
               </select>

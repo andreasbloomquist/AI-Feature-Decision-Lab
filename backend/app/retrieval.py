@@ -146,7 +146,9 @@ class BM25Index:
     def score(self, query_tokens: list[str], i: int) -> float:
         tf, dl = self.tf[i], self.lengths[i]
         s = 0.0
-        for t in query_tokens:
+        # Each distinct query term counts once: repeating a word must not inflate the score past
+        # search's min_score or guarded RAG's retrieval floor.
+        for t in dict.fromkeys(query_tokens):
             f = tf.get(t)
             if not f:
                 continue

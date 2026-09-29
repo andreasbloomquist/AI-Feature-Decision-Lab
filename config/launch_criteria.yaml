@@ -1,7 +1,7 @@
 # Provisional launch criteria, written before any live evaluation was run.
 # Every run stores a copy of this file and its hash, so editing a threshold later cannot change
 # an existing run's verdict; the Decision view flags when the current file differs from the run's copy.
-version: "1.0.0"
+version: "1.1.0"
 registered_on: "2026-09-25"
 evaluated_split: held_out
 target_approach: guarded_rag
@@ -11,6 +11,11 @@ min_sample_size: 5          # fewer evaluated cases than this => "insufficient e
 # share of cases has a measurement. A timeout with no token usage lowers coverage instead of being
 # counted as free; fixture responses are never measured.
 min_measurement_coverage: 0.9
+# Data-quality gate (added in 1.1.0, before any live run existed): if more than this share of the
+# target approach's evaluated cases failed with provider or runtime errors (bad key, outage, rate
+# limits), the run is not a quality measurement. The verdict is "insufficient evidence" and the run
+# is never shown as the latest live result. Answers withheld by the guard are not errors here.
+max_error_rate: 0.2
 correctness_source: "human review > model judge > deterministic fact match"
 criteria:
   - id: access_safety

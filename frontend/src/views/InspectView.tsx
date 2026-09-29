@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import { api } from "../api";
 import { AnswerCard } from "../components/AnswerCard";
 import { ErrorNotice, Loading } from "../components/Notice";
@@ -24,25 +24,27 @@ function matches(row: CaseRow, filters: Params): boolean {
   return FILTER_KEYS.every((k) => !filters[k] || row[k] === filters[k]);
 }
 
+/** Filter options plus the current value, so a deep-linked filter with no matches still shows what is applied. */
+function withCurrent(options: string[], current: string | undefined): string[] {
+  return current && !options.includes(current) ? [...options, current] : options;
+}
+
 export function InspectView({ route }: { route: Route }) {
   const runs = useRuns();
   const params: Params = Object.fromEntries(route.params.entries());
   const runId = params.run ?? defaultRunId(runs.data ?? []);
   const caseId = params.case ?? null;
   const focus = isApproachId(params.focus) ? params.focus : null;
-  const [refresh, setRefresh] = useState(0);
 
   // Every link and control keeps all current parameters and changes only what it names.
   const link = (patch: Params) => href("inspect", { ...params, run: runId ?? undefined, ...patch });
   const set = (patch: Params) => navigate("inspect", { ...params, run: runId ?? undefined, ...patch });
 
-  const rows = useAsync(runId ? `${runId}:${refresh}` : null, () => api.cases(runId!, {}));
-  const detail = useAsync(runId && caseId ? `${runId}:${caseId}:${refresh}` : null, () => api.caseDetail(runId!, caseId!));
-  const visible = useMemo(() => (rows.data ?? []).filter((r) => matches(r, params)), [rows.data, params]);
-  const options = useMemo(() => {
-    const uniq = (k: keyof CaseRow) => [...new Set((rows.data ?? []).map((r) => r[k]).filter(Boolean) as string[])].sort();
-    return { outcome: uniq("outcome"), error_type: uniq("error_type") };
-  }, [rows.data]);
+  const rows = useAsync(runId, () => api.cases(runId!, {}));
+  const detail = useAsync(runId && caseId ? `${runId}:${caseId}` : null, () => api.caseDetail(runId!, caseId!));
+  const visible = (rows.data ?? []).filter((r) => matches(r, params));
+  const uniq = (k: keyof CaseRow) => [...new Set((rows.data ?? []).map((r) => r[k]).filter(Boolean) as string[])].sort();
+  const options = { outcome: uniq("outcome"), error_type: uniq("error_type") };
   const run = runs.data?.find((r) => r.run_id === runId);
 
   return (
@@ -60,8 +62,8 @@ export function InspectView({ route }: { route: Route }) {
         <Select label="Split" value={params.split} onChange={(v) => set({ split: v })} options={[["development", "Development"], ["held_out", "Held-out"]]} />
         <Select label="Category" value={params.category} onChange={(v) => set({ category: v })} options={Object.entries(CATEGORY_LABELS)} />
         <Select label="Approach" value={params.approach} onChange={(v) => set({ approach: v })} options={APPROACHES.map((a) => [a, APPROACH_LABELS[a]])} />
-        <Select label="Outcome" value={params.outcome} onChange={(v) => set({ outcome: v })} options={options.outcome.map((o) => [o, OUTCOME_LABELS[o] ?? o])} />
-        <Select label="Error type" value={params.error_type} onChange={(v) => set({ error_type: v })} options={options.error_type.map((o) => [o, o])} />
+        <Select label="Outcome" value={params.outcome} onChange={(v) => set({ outcome: v })} options={withCurrent(options.outcome, params.outcome).map((o) => [o, OUTCOME_LABELS[o] ?? o])} />
+        <Select label="Error type" value={params.error_type} onChange={(v) => set({ error_type: v })} options={withCurrent(options.error_type, params.error_type).map((o) => [o, o])} />
         <span className="muted small filter-count" role="status">
           {visible.length} responses
         </span>
@@ -117,7 +119,11 @@ export function InspectView({ route }: { route: Route }) {
               focus={focus}
               onFocus={(a) => set({ focus: a })}
               isFixture={run?.mode === "fixture"}
-              onReviewed={() => setRefresh((n) => n + 1)}
+              onReviewed={() => {
+                // Same selection, fresh data: reload keeps the current rows on screen meanwhile.
+                rows.reload();
+                detail.reload();
+              }}
             />
           )}
         </section>
@@ -195,11 +201,11 @@ function CaseDetailPanel({
         {c.notes && <p className="muted small">Note: {c.notes}</p>}
       </div>
 
-      <div className="tabs" role="tablist" aria-label="Approach">
+      <div className="tabs" role="group" aria-label="Approach">
         {detail.responses.map((r) => {
           const tone = outcomeTone(r.succeeded, r.grade.outcome);
           return (
-            <button key={r.approach} role="tab" aria-selected={r.approach === row.approach} className={`tab ${r.approach === row.approach ? "tab-active" : ""}`} onClick={() => onFocus(r.approach)}>
+            <button key={r.approach} type="button" aria-pressed={r.approach === row.approach} className={`tab ${r.approach === row.approach ? "tab-active" : ""}`} onClick={() => onFocus(r.approach)}>
               {APPROACH_LABELS[r.approach]}
               <span className={`dot dot-${tone}`} aria-hidden="true" />
               <span className="sr-only">({OUTCOME_LABELS[r.grade.outcome] ?? r.grade.outcome})</span>
@@ -318,19 +324,20 @@ function ReviewBox({
   canReview: boolean;
   onReviewed: () => void;
 }) {
-  const [verdict, setVerdict] = useState("correct");
+  // No default verdict: a review overrides the automated label, so it has to be a deliberate choice.
+  const [verdict, setVerdict] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [reviewer, setReviewer] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => setError(null), [responseId]);
 
   const save = async () => {
     setSaving(true);
     setError(null);
     try {
-      await api.review(responseId, verdict, note, reviewer);
+      await api.review(responseId, verdict!, note, reviewer.trim());
       setNote("");
+      setVerdict(null);
       onReviewed();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -356,7 +363,8 @@ function ReviewBox({
       )}
       <p className="muted small">
         A review sets the final label for metrics. The automated grade and any model-judge verdict above are kept unchanged.
-        {!canReview && " Correctness reviews apply to answerable cases; notes are still recorded."}
+        {!canReview &&
+          " This case isn't scored on correctness, so the verdict you choose is recorded with your note but doesn't change any metric."}
       </p>
       <div className="review-form">
         <div className="radio-row" role="radiogroup" aria-label="Verdict">
@@ -368,8 +376,8 @@ function ReviewBox({
         </div>
         <textarea aria-label="Review note" placeholder="Note (what is right or wrong, and why)" value={note} onChange={(e) => setNote(e.target.value)} rows={2} />
         <div className="review-actions">
-          <input aria-label="Reviewer name" placeholder="Your name (optional)" value={reviewer} onChange={(e) => setReviewer(e.target.value)} />
-          <button className="btn" onClick={save} disabled={saving}>
+          <input aria-label="Reviewer name" placeholder="Your name (required)" required value={reviewer} onChange={(e) => setReviewer(e.target.value)} />
+          <button className="btn" onClick={save} disabled={saving || !verdict || !reviewer.trim()}>
             {saving ? "Saving…" : "Save review"}
           </button>
         </div>

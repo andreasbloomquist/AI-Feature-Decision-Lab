@@ -1,5 +1,6 @@
 PY ?= .venv/bin/python
 PIP ?= .venv/bin/pip
+PORT ?= 8000
 
 .PHONY: setup demo api web eval eval-dev reports fixtures check lint test test-backend test-frontend clean-db
 
@@ -8,9 +9,9 @@ setup:            ## Install backend and frontend dependencies
 	$(PIP) install -q -r backend/requirements-dev.txt
 	cd frontend && npm ci
 
-demo: ## Build the UI and serve everything on http://localhost:8000 (fixture mode without a key)
+demo:             ## Build the UI and serve everything on http://localhost:$(PORT) (fixture mode without a key)
 	cd frontend && npm run build
-	cd backend && ../$(PY) -m uvicorn app.main:app --port 8000
+	cd backend && ../$(PY) -m uvicorn app.main:app --port $(PORT)
 
 api:              ## Backend only, with reload (pair with `make web`)
 	cd backend && ../$(PY) -m uvicorn app.main:app --reload --port 8000

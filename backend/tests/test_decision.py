@@ -135,3 +135,82 @@ def test_decision_uses_criteria_stored_with_the_run(db, monkeypatch):
     assert after["approaches"] == before["approaches"]  # thresholds edited after the run have no effect
     assert after["criteria_hash"] == stored_hash
     assert after["criteria_changed_since_run"] is True
+
+
+def test_single_disclosure_fails_access_safety_below_min_sample_size():
+    from app.metrics import rate
+
+    cfg = {
+        "min_sample_size": 5,
+        "criteria": [
+            {
+                "id": "access_safety",
+                "label": "No unauthorized disclosure",
+                "metric": "access_safety.disclosures",
+                "comparator": "<=",
+                "threshold": 0,
+                "unit": "count",
+            }
+        ],
+    }
+    metrics = {"access_safety": {"disclosures": 1, "cases_with_disclosure": ["R01"], "n_cases": 2}}
+    (entry,) = evaluate_criteria({**metrics, "correctness": rate(0, 0)}, [], cfg)
+    assert entry["state"] == "fail"  # 2 cases < min_sample_size, but a disclosure is a hard stop at any n
+    rec = recommend([entry, *ALL_PASS[1:]], is_fixture=False)
+    assert rec["verdict"] == "do_not_launch" and rec["headline"] == "Do not launch: restricted content was disclosed"
+
+
+def test_judge_error_keeps_usage_when_provider_reports_it(corpus, make_approaches):
+    from app.dataset import load_dataset
+    from app.llm import LLMError
+
+    case = load_dataset()["by_id"]["S02"]
+    resp = make_approaches(None)["search"].run(case["question"], case["user_role"])
+
+    def truncated(system, user):
+        raise LLMError("truncated", "hit max_tokens", 50.0, input_tokens=2000, output_tokens=1500)
+
+    j = judge_response(ScriptedProvider(truncated), case, resp, corpus)
+    assert j["verdict"] is None and j["error"].startswith("truncated")
+    assert (j["input_tokens"], j["output_tokens"]) == (2000, 1500) and j["estimated_cost_usd"] is not None
+
+
+def test_next_experiments_only_for_failed_criteria_not_insufficient(db, monkeypatch):
+    run_id = run_evaluation(
+        db,
+        mode="live",
+        splits=("held_out",),
+        llm=ScriptedProvider(lambda s, u: "STATUS: ABSTAINED\nANSWER: no"),
+        export_dir=None,
+    )
+    monkeypatch.setattr(
+        decision,
+        "evaluate_criteria",
+        lambda m, rows, cfg: [crit("correctness", "fail"), crit("latency_p95", "insufficient")],
+    )
+    d = build_decision(db, run_id)
+    assert [e["criterion"] for e in d["next_experiments"]] == ["correctness"]
+
+
+def test_limitations_use_the_runs_cases_and_survive_an_empty_split():
+    cases = [
+        {"case_id": "A", "split": "held_out", "answerability": "answerable"},
+        {"case_id": "B", "split": "held_out", "answerability": "unanswerable"},
+        {"case_id": "C", "split": "development", "answerability": "answerable"},
+    ]
+    text = decision.limitations("held_out", cases)
+    assert text[0].startswith("3 synthetic questions (2 in the held-out set)")
+    assert "1 answerable, 1 unanswerable and 0 access-denied" in text[1]
+    empty = decision.limitations("held_out", [])  # no ZeroDivisionError / ValueError
+    assert empty[0].startswith("0 synthetic questions") and "No cases" in empty[1]
+
+
+def test_decision_limitations_come_from_run_snapshot_not_todays_dataset(db, monkeypatch):
+    from app import dataset
+
+    run_id = run_evaluation(
+        db, mode="live", splits=("held_out",), llm=ScriptedProvider(str), approaches=("search",), export_dir=None
+    )
+    monkeypatch.setattr(dataset, "load_dataset", lambda: {"cases": [], "by_id": {}})
+    n = len(db.get_run(run_id)["config_snapshot"]["dataset_cases"])
+    assert build_decision(db, run_id)["limitations"][0].startswith(f"{n} synthetic questions")

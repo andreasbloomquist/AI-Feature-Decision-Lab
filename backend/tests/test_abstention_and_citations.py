@@ -97,3 +97,41 @@ def test_document_level_citation_uses_numeric_passage_order(corpus):
 
 def test_markers_are_case_insensitive():
     assert parse_citation_markers("see [ns-trv-2026#3]") == [("NS-TRV-2026", "NS-TRV-2026#3")]
+
+
+def test_generation_error_without_usage_leaves_cost_unavailable(make_approaches):
+    from app.llm import LLMError
+
+    def timeout(system, user):
+        raise LLMError("timeout", "model request timed out", latency_ms=20000.0)
+
+    resp = make_approaches(ScriptedProvider(timeout))["guarded_rag"].run("Who approves travel over $2,000?", "employee")
+    assert resp.status == "error" and resp.input_tokens is None and resp.estimated_cost_usd is None
+
+
+def test_truncated_generation_records_usage_on_the_error_response(make_approaches):
+    from app.llm import LLMError
+
+    def truncated(system, user):
+        raise LLMError("truncated", "hit max_tokens", 900.0, input_tokens=1500, output_tokens=800)
+
+    resp = make_approaches(ScriptedProvider(truncated))["guarded_rag"].run(
+        "Who approves travel over $2,000?", "employee"
+    )
+    assert resp.status == "error" and resp.error.startswith("truncated")
+    assert (resp.input_tokens, resp.output_tokens) == (1500, 800)
+    assert resp.estimated_cost_usd is not None and resp.latency_ms == 900.0
+
+
+def test_repeating_a_query_word_does_not_change_the_score(retriever):
+    index = retriever.index_for("employee")
+    once = index.search("travel approval", 3)
+    repeated = index.search("travel travel travel travel approval approval", 3)
+    assert [(h.passage.passage_id, h.score) for h in once] == [(h.passage.passage_id, h.score) for h in repeated]
+
+
+def test_repeated_words_cannot_push_a_question_over_the_retrieval_floor(make_approaches):
+    padded = " ".join([UNANSWERABLE] + ["contributions"] * 20)
+    approaches = make_approaches(ScriptedProvider(_fail))
+    assert approaches["guarded_rag"].run(padded, "employee").guard_reason.startswith("retrieval_below_floor")
+    assert approaches["search"].run(padded, "employee").status == "abstained"

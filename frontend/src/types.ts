@@ -78,7 +78,15 @@ export interface Metrics {
     per_question_usd: number | null;
   };
   tokens: { input_total: number | null; output_total: number | null; n_with_usage: number };
-  errors: { count: number; n: number; case_ids: string[] };
+  errors: {
+    count: number;
+    n: number;
+    case_ids: string[];
+    /** Provider or runtime failures (timeouts, rate limits, bad output), counted against run validity. */
+    provider?: number;
+    /** Answers the guard withheld on purpose; not failures of the provider. */
+    withheld?: number;
+  };
   status_counts: Record<string, number>;
   fixture_rows: number;
 }
@@ -97,6 +105,10 @@ export interface RunSummary {
   prompt_versions: Record<string, { approach_version?: string; prompt_version: string | null }>;
   model_config: Record<string, string | number | null>;
   n_responses: number;
+  /** A run limited to some cases or approaches (a debug run); never used as the default. */
+  partial?: boolean;
+  /** The live run the backend uses for the decision (full, held-out, not dominated by errors). */
+  latest?: boolean;
 }
 
 export interface RunDetail extends RunSummary {
@@ -229,8 +241,24 @@ export interface Decision {
   correctness_source: string | null;
   target_approach: ApproachId;
   recommendation: { verdict: string; headline: string; summary: string };
-  approaches: Partial<Record<ApproachId, { label: string; criteria: Criterion[]; passes: number; total: number }>>;
+  approaches: Partial<
+    Record<
+      ApproachId,
+      {
+        label: string;
+        criteria: Criterion[];
+        passes: number;
+        total: number;
+        /** Where the correctness labels came from; human labels override the automated grade. */
+        label_sources?: { human: number; model_judge: number; deterministic: number } | null;
+        /** Human reviews of correctness labels; `changed` counts those that differ from the automated label. */
+        human_reviews?: { reviewed: number; changed: number } | null;
+      }
+    >
+  >;
   comparison: {
+    target: ApproachId;
+    baseline: ApproachId;
     correctness_lift_pp: number | null;
     target_correct: string;
     baseline_correct: string;

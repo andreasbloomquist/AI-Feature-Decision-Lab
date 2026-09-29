@@ -14,10 +14,10 @@ from .approaches.base import APPROACH_LABELS, APPROACH_NAMES
 from .corpus import get_corpus
 from .dataset import load_dataset
 from .db import Database
-from .decision import build_decision, criteria_config, limitations
+from .decision import build_decision, criteria_config, human_override_note, limitations
 from .evaluation import ensure_fixture_run
 from .prompts import load_approach_config
-from .results import latest_runs, load_rows, summarize_rows
+from .results import latest_runs, load_rows, run_cases, summarize_rows
 from .retrieval import DEFAULT_B, DEFAULT_K1, Retriever
 from .settings import ROOT, load_settings
 
@@ -83,6 +83,12 @@ def metrics_table(metrics: dict) -> str:
             f"{usd(c['per_question_usd'])} per question; {usd(c['total_usd'])} total (n={c['n_with_usage']}{missing})"
         )
 
+    def errors(m):
+        e = m["errors"]
+        if not e.get("withheld"):
+            return f"{e['count']} of {e['n']}"
+        return f"{e['count']} of {e['n']} ({e['provider']} provider/runtime, {e['withheld']} withheld by the guard)"
+
     return head + "".join(
         [
             row("Answer correctness (answerable)", lambda m: rate(m["correctness"])),
@@ -96,7 +102,7 @@ def metrics_table(metrics: dict) -> str:
             ),
             row("Latency p50 / p95", lat),
             row("Model cost", cost),
-            row("Errors", lambda m: f"{m['errors']['count']} of {m['errors']['n']}"),
+            row("Errors", errors),
         ]
     )
 
@@ -156,7 +162,7 @@ def evaluation_report(db: Database) -> str:
             "as results. Run `make eval` with an API key to produce a live report.\n"
         )
     s.append("## Read this first: dataset size and limits\n")
-    s.append("".join(f"- {line}\n" for line in limitations(split)))
+    s.append("".join(f"- {line}\n" for line in limitations(split, list(run_cases(db.get_run(run["run_id"])).values()))))
     s.append(
         "- Cost is estimated from recorded tokens and the editable price table in `config/pricing.yaml`; "
         "missing usage is reported as unavailable, never as zero.\n"
@@ -318,14 +324,17 @@ def _memo_body(db: Database, d: dict, run_id: str, example: bool) -> list[str]:
         c = d["comparison"]
         lift = c["correctness_lift_pp"]
         s.append(
-            f"Against the search baseline, guarded RAG answered {c['target_correct']} answerable held-out questions "
-            f"correctly versus {c['baseline_correct']} for search"
+            f"Against the {APPROACH_LABELS[c['baseline']]} baseline, {APPROACH_LABELS[c['target']]} answered "
+            f"{c['target_correct']} answerable held-out questions correctly versus {c['baseline_correct']} for "
+            f"{APPROACH_LABELS[c['baseline']]}"
             + (f" ({'+' if lift > 0 else ''}{lift} points)" if lift is not None else "")
             + f", at a p95 latency of {ms(c['target_p95_ms'])} versus {ms(c['baseline_p95_ms'])} and a model cost of "
             f"{usd(c['target_cost_per_question'])} per question versus {usd(c['baseline_cost_per_question'])}.\n\n"
         )
     s.append("### Evidence (held-out set)\n\n")
     s.append(_criteria_table(d, d["target_approach"]))
+    if note := human_override_note(d):
+        s.append(f"\n> **Human overrides.** {note}\n")
     s.append("\nAll approaches on the same criteria:\n\n")
     s.append(table_header("Criterion", *(v["label"] for v in d["approaches"].values())))
     for i, c in enumerate(d["approaches"][d["target_approach"]]["criteria"]):
