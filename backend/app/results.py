@@ -109,6 +109,9 @@ def _is_usable_live_run(db: Database, run: dict, split: str) -> bool:
     return _USABLE_CACHE[key]
 
 
+# The one split a decision run of record is designated for, locked on and counted on. Launch criteria
+# name the split they evaluate (`evaluated_split`); a run whose stored criteria evaluate a different split
+# cannot be designated, so the designation, the review lock and the decision always agree on the split.
 DECISION_SPLIT = "held_out"
 
 
@@ -128,6 +131,13 @@ def designation_blocker(db: Database, run: dict, split: str = DECISION_SPLIT) ->
         return (
             f"This run does not cover the {split.replace('_', '-')} split, so it cannot be the decision run of record."
         )
+    full = db.get_run(run["run_id"]) or {}
+    evaluated = ((full.get("config_snapshot") or {}).get("launch_criteria") or {}).get("evaluated_split", split)
+    if evaluated != split:
+        return (
+            f"This run's launch criteria evaluate the {evaluated.replace('_', '-')} split, so it cannot be the "
+            f"decision run of record for the {split.replace('_', '-')} split."
+        )
     if not _is_usable_live_run(db, run, split):
         return (
             "This run has no usable results for the target approach: it is missing or dominated by provider "
@@ -136,19 +146,22 @@ def designation_blocker(db: Database, run: dict, split: str = DECISION_SPLIT) ->
     return None
 
 
-def designated_run(db: Database, split: str = DECISION_SPLIT) -> tuple[dict, dict] | None:
-    """(run, designation) for the current decision run of record for `split`, or None when there is none.
+def run_of_record(db: Database, split: str = DECISION_SPLIT) -> tuple[dict | None, dict | None, str | None]:
+    """(run, designation, problem) for the current decision run of record for `split`.
 
-    A designation is only accepted for a usable run and usability never changes after a run completes, so
-    the check here is a safeguard, not a rule that can move the decision.
+    All three are None when nothing is designated. A designation is only accepted for a usable run, and
+    usability does not change after a run completes, so `problem` should never be set; if it is, the run is
+    None (the caller falls back to the newest usable run) and `problem` says why, so the fallback is shown
+    rather than silent.
     """
     designation = db.current_designation(split)
     if designation is None:
-        return None
+        return None, None, None
     run = next((r for r in db.list_runs() if r["run_id"] == designation["run_id"]), None)
-    if run is None or designation_blocker(db, run, split) is not None:
-        return None
-    return run, designation
+    problem = "the run no longer exists." if run is None else designation_blocker(db, run, split)
+    if problem:
+        return None, designation, problem
+    return run, designation, None
 
 
 def latest_runs(db: Database, split: str = DECISION_SPLIT) -> tuple[dict | None, dict | None]:
@@ -160,31 +173,44 @@ def latest_runs(db: Database, split: str = DECISION_SPLIT) -> tuple[dict | None,
     good full result.
     """
     runs = db.list_runs()
-    record = designated_run(db, split)
-    live = record[0] if record else next((r for r in runs if _is_usable_live_run(db, r, split)), None)
+    record, _, _ = run_of_record(db, split)
+    live = record or next((r for r in runs if _is_usable_live_run(db, r, split)), None)
     fixture = next((r for r in runs if r["mode"] == "fixture"), None)
     return live, fixture
+
+
+def split_response_ids(db: Database, run_id: str, split: str = DECISION_SPLIT) -> list[str]:
+    """The IDs of a run's responses whose case is in `split`, using the cases stored with the run."""
+    run = db.get_run(run_id)
+    cases = run_cases(run) if run else {}
+    return [
+        r["response_id"] for r in db.responses_for_run(run_id) if (cases.get(r["case_id"]) or {}).get("split") == split
+    ]
 
 
 def held_out_usage(db: Database, dataset_version: str, split: str = DECISION_SPLIT) -> dict:
     """How many live runs have evaluated `split` of this dataset version.
 
     Every live run that exposed answers on the split counts, whatever its outcome: partial, failed and
-    error-dominated runs included, because each one let someone look at held-out results. Only runs still
-    being written are left out. Fixture runs never count: they are not model evaluations.
+    error-dominated runs included, because each one let someone look at held-out results. A run still marked
+    `running` counts as soon as it has stored a response on the split: a process killed mid-run leaves that
+    status forever, while its answers stay visible. Those are listed in `in_progress_run_ids` too. Fixture
+    runs never count: they are not model evaluations.
     """
-    runs = [
-        r
-        for r in db.list_runs()
-        if r["mode"] == "live"
-        and r["status"] != "running"
-        and r["dataset_version"] == dataset_version
-        and split in r["splits"]
-    ]
+    runs, in_progress = [], []
+    for r in db.list_runs():
+        if r["mode"] != "live" or r["dataset_version"] != dataset_version or split not in r["splits"]:
+            continue
+        if r["status"] == "running":
+            if not split_response_ids(db, r["run_id"], split):
+                continue
+            in_progress.append(r["run_id"])
+        runs.append(r)
     runs.sort(key=lambda r: (r["created_at"], r["run_id"]))
     return {
         "dataset_version": dataset_version,
         "split": split,
         "evaluations": len(runs),
         "run_ids": [r["run_id"] for r in runs],
+        "in_progress_run_ids": [r["run_id"] for r in runs if r["run_id"] in in_progress],
     }

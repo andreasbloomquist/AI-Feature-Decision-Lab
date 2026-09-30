@@ -129,6 +129,8 @@ export interface HeldOutUsage {
   split?: string;
   evaluations: number;
   run_ids: string[];
+  /** Runs still marked running that already stored held-out answers (possibly killed mid-run); they count. */
+  in_progress_run_ids?: string[];
 }
 
 export interface RunDetail extends RunSummary {
@@ -295,6 +297,10 @@ export interface Decision {
   /** Why this run cannot be designated (fixture, partial, no held-out split, error-dominated); null when it can. */
   designation_blocker?: string | null;
   held_out_usage?: HeldOutUsage | null;
+  /** Every designation for the decision split, newest first (the audit trail). */
+  designation_history?: Designation[];
+  /** Set when the designated run fails the designation rules and the newest usable run is used instead. */
+  run_of_record_warning?: string | null;
 }
 
 export interface DecisionResponse {

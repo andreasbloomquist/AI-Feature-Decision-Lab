@@ -127,18 +127,40 @@ function HeldOutUsage({ d }: { d: DecisionData }) {
   const u = d.held_out_usage;
   if (!u) return null;
   const times = `${u.evaluations} ${u.evaluations === 1 ? "time" : "times"}`;
+  const inProgress = new Set(u.in_progress_run_ids ?? []);
+  const runIds = u.run_ids.map((id) => (inProgress.has(id) ? `${id} (in progress)` : id)).join(", ");
   if (u.evaluations > 1) {
     return (
       <div className="notice notice-warn" role="note">
         <strong>Held-out set evaluated {times}.</strong> The held-out set has been evaluated {u.evaluations} times; the verdict may reflect
-        tuning against it. Dataset <span className="mono">{u.dataset_version}</span>, runs <span className="mono">{u.run_ids.join(", ")}</span>.
+        tuning against it. Dataset <span className="mono">{u.dataset_version}</span>, runs <span className="mono">{runIds}</span>.
       </div>
     );
   }
   return (
     <p className="muted small" role="note">
-      Held-out set evaluated {times} by live runs (dataset <span className="mono">{u.dataset_version}</span>).
+      Held-out set evaluated {times} by live runs (dataset <span className="mono">{u.dataset_version}</span>)
+      {inProgress.size > 0 && ", still in progress"}.
     </p>
+  );
+}
+
+/** Every designation, newest first, shown once the run of record has moved at least once. */
+function DesignationHistory({ d }: { d: DecisionData }) {
+  const history = d.designation_history ?? [];
+  if (history.length < 2) return null;
+  return (
+    <details className="small" open>
+      <summary>Designation history ({history.length})</summary>
+      <ol className="plain-list" aria-label="Designation history">
+        {history.map((h) => (
+          <li key={h.designation_id}>
+            {dateText(h.designated_at)} · <span className="mono">{h.run_id}</span> · by {h.designated_by}
+            {h.note && <> · {h.note}</>}
+          </li>
+        ))}
+      </ol>
+    </details>
   );
 }
 
@@ -180,6 +202,11 @@ export function DecisionView({ runParam }: { runParam: string | null }) {
         </span>
       </div>
 
+      {d?.run_of_record_warning && (
+        <div className="notice notice-warn" role="note">
+          <strong>Run of record not used.</strong> {d.run_of_record_warning}
+        </div>
+      )}
       {d?.criteria_changed_since_run && (
         <div className="notice notice-warn" role="note">
           <strong>Criteria changed since this run.</strong> This verdict uses the criteria stored with the run. The current
@@ -241,6 +268,7 @@ export function DecisionView({ runParam }: { runParam: string | null }) {
                   runs.reload();
                 }}
               />
+              <DesignationHistory d={d} />
               <HeldOutUsage d={d} />
             </>
           )}

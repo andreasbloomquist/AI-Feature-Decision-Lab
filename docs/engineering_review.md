@@ -153,6 +153,19 @@ This round reviewed the code that the second review and the product review had a
 | 49 | Low | API validation errors reached the UI as "The request was not valid." with no reason. | The first field and its message are shown. | — |
 | 50 | Low | The second review's backend test count was off by one. | Corrected. | — |
 
+## Reviews of new work
+
+From here on, each PR gets its own independent principal-engineer review before it merges. Findings of Medium severity or higher are recorded here with their fix and regression test.
+
+### PR #5: decision run of record and held-out usage (R1.1, R1.2)
+
+| # | Severity | Finding | Fix | Regression test |
+|---|---|---|---|---|
+| 55 | Medium | **The review lock could be laundered.** Designate A, move the designation to B (unlocking A), change A's held-out labels, then designate A again: the memo said "reviews are locked" and nothing showed the labels had changed after the first designation. | Re-designating a run is refused (409) when any of its held-out responses was reviewed after its first designation; the check runs in the same transaction as the insert. The decision carries `designation_history`, and the Decision view and memo list it once the run of record has moved. | `test_a_run_reviewed_while_released_cannot_be_designated_again`, `test_memo_lists_the_designation_history_when_the_run_of_record_moved`, `shows the designation history once the run of record has moved` (frontend) |
+| 56 | Medium | **The usage counter missed killed runs.** A runner killed mid-run (SIGKILL, out of memory) leaves the status `running` forever while its held-out answers are visible, and the counter skipped every `running` run. | A `running` live run counts as soon as it has stored a held-out response, and is listed in `in_progress_run_ids`, shown as "(in progress)" in the Decision view and memo. | `test_held_out_usage_counts_a_run_left_running_with_held_out_answers`, `labels runs that are still in progress` (frontend) |
+
+Low findings fixed in the same round: `designated_by` and the note are collapsed to one line, and the memo writes stored text as one line, so a name can't inject a heading (`test_designated_by_and_note_are_collapsed_to_one_line`); the review lock and the re-designation check run inside a `BEGIN IMMEDIATE` transaction with their insert (`test_review_lock_is_checked_in_the_same_transaction_as_the_insert`); designation, lock, count and decision use one split, and a run whose criteria evaluate another split can't be designated (`test_a_run_whose_criteria_evaluate_another_split_cannot_be_designated`); an unusable designated run is disclosed rather than silently replaced (`test_an_unusable_run_of_record_is_disclosed_not_silently_replaced`); the docs say the designator's name is trusted as typed and that usage is counted for the shown run's dataset version.
+
 ## Known limitations and next steps
 
 These are open by choice, and are listed so a reader doesn't have to find them. Planned work is scheduled on the [roadmap](ROADMAP.md) (items E1–E3 and milestone M1).

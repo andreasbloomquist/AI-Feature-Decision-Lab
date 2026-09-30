@@ -320,11 +320,13 @@ def decision_memo(db: Database) -> str:
 def _integrity_lines(d: dict) -> list[str]:
     """Which run the decision rests on, and how often its held-out set was evaluated (roadmap R1.1, R1.2)."""
     s = []
+    if warning := d.get("run_of_record_warning"):
+        s.append(f"> **Warning: run of record not used.** {_one_line(warning)}\n\n")
     rec = d.get("designation")
     if rec:
-        note = f" Note: {' '.join(rec['note'].split())}" if rec.get("note") else ""
+        note = f" Note: {_one_line(rec['note'])}" if rec.get("note") else ""
         s.append(
-            f"**Decision run of record:** designated by {rec['designated_by']} on {rec['designated_at']}. "
+            f"**Decision run of record:** designated by {_one_line(rec['designated_by'])} on {rec['designated_at']}. "
             f"Human reviews of its held-out responses are locked.{note}\n\n"
         )
     else:
@@ -337,11 +339,29 @@ def _integrity_lines(d: dict) -> list[str]:
     if usage:
         s.append(
             f"**Held-out usage:** live runs have evaluated the held-out set of dataset "
-            f"`{usage['dataset_version']}` {usage['evaluations']} time(s).\n\n"
+            f"`{usage['dataset_version']}` {usage['evaluations']} time(s)"
+            + (
+                f", {len(usage['in_progress_run_ids'])} of them still in progress"
+                if usage.get("in_progress_run_ids")
+                else ""
+            )
+            + ".\n\n"
         )
     if warning := held_out_usage_warning(d):
         s.append(f"> **Warning: repeated held-out evaluation.** {warning}\n\n")
+    history = d.get("designation_history") or []
+    if len(history) > 1:
+        s.append("**Designation history** (newest first):\n\n")
+        for h in history:
+            note = f": {_one_line(h['note'])}" if h.get("note") else ""
+            s.append(f"- {h['designated_at']}: `{h['run_id']}` by {_one_line(h['designated_by'])}{note}\n")
+        s.append("\n")
     return s
+
+
+def _one_line(text: str) -> str:
+    """Text written into the memo as one line: stored text can't start a heading, list or quote."""
+    return " ".join(str(text).split())
 
 
 def _memo_body(db: Database, d: dict, run_id: str, example: bool) -> list[str]:

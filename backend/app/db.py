@@ -75,6 +75,13 @@ CREATE INDEX IF NOT EXISTS idx_reviews_response ON reviews(response_id);
 """
 
 
+REVIEWS_LOCKED = "reviews are locked: this response belongs to the decision run of record"
+
+
+class WriteRefused(Exception):
+    """A write refused by a rule that is checked in the same transaction as the write."""
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -105,6 +112,17 @@ class Database:
                 conn.commit()
             finally:
                 conn.close()
+
+    @contextmanager
+    def transaction(self):
+        """A connection holding SQLite's write lock from the start (BEGIN IMMEDIATE).
+
+        A rule checked inside it cannot be invalidated by another thread or process before the write
+        commits. Raising inside the block rolls everything back.
+        """
+        with self.connect() as c:
+            c.execute("BEGIN IMMEDIATE")
+            yield c
 
     # ---- runs -------------------------------------------------------------------------
     def create_run(self, run: dict) -> None:
@@ -216,7 +234,17 @@ class Database:
         return out
 
     # ---- reviews ----------------------------------------------------------------------
-    def add_review(self, response_id: str, verdict: str, note: str | None, reviewer: str | None) -> dict:
+    def add_review(
+        self,
+        response_id: str,
+        verdict: str,
+        note: str | None,
+        reviewer: str | None,
+        *,
+        lock_split: str | None = None,
+    ) -> dict:
+        """Store a review. With `lock_split` (the response's case is in that split), refuse with
+        `WriteRefused` when the response's run is the current decision run of record for that split."""
         rv = {
             "review_id": new_id("rev"),
             "response_id": response_id,
@@ -225,12 +253,28 @@ class Database:
             "reviewer": reviewer,
             "created_at": now_iso(),
         }
-        with self.connect() as c:
+        with self.transaction() as c:
+            if lock_split is not None:
+                record = self._current_designation(c, lock_split)
+                run = c.execute("SELECT run_id FROM responses WHERE response_id=?", (response_id,)).fetchone()
+                if record and run and record["run_id"] == run["run_id"]:
+                    raise WriteRefused(REVIEWS_LOCKED)
             c.execute("INSERT INTO reviews VALUES (:review_id,:response_id,:verdict,:note,:reviewer,:created_at)", rv)
         return rv
 
     # ---- decision run of record ------------------------------------------------------
-    def add_designation(self, run_id: str, split: str, designated_by: str, note: str | None) -> dict:
+    def add_designation(
+        self,
+        run_id: str,
+        split: str,
+        designated_by: str,
+        note: str | None,
+        *,
+        locked_response_ids: list[str] | None = None,
+    ) -> dict:
+        """Designate a run. `locked_response_ids` are the run's responses whose reviews the designation locks
+        (its responses in `split`). If any of them was reviewed after the run was first designated, the lock
+        was lifted in between, so re-designating would present changed labels as locked: `WriteRefused`."""
         d = {
             "designation_id": new_id("desig"),
             "run_id": run_id,
@@ -239,7 +283,24 @@ class Database:
             "note": note,
             "designated_at": now_iso(),
         }
-        with self.connect() as c:
+        with self.transaction() as c:
+            first = c.execute(
+                "SELECT MIN(designated_at) FROM run_designations WHERE run_id=? AND split=?", (run_id, split)
+            ).fetchone()[0]
+            if first is not None and locked_response_ids:
+                marks = ",".join("?" * len(locked_response_ids))
+                # `>=`: timestamps have one-second resolution, so a tie counts as after (the safe side).
+                n = c.execute(
+                    f"SELECT COUNT(*) FROM reviews WHERE response_id IN ({marks}) AND created_at >= ?",
+                    (*locked_response_ids, first),
+                ).fetchone()[0]
+                if n:
+                    raise WriteRefused(
+                        f"This run can't be designated again: {n} review(s) of its {split.replace('_', '-')} "
+                        f"responses were made after it was first designated on {first}, while it was not the run "
+                        "of record. Designating it again would present those changed labels as locked. "
+                        "Designate a different run, or run a fresh evaluation."
+                    )
             c.execute(
                 "INSERT INTO run_designations VALUES "
                 "(:designation_id,:run_id,:split,:designated_by,:note,:designated_at)",
@@ -256,8 +317,15 @@ class Database:
         return [dict(r) for r in rows]
 
     def current_designation(self, split: str) -> dict | None:
-        rows = self.designations(split)
-        return rows[0] if rows else None
+        with self.connect() as c:
+            return self._current_designation(c, split)
+
+    @staticmethod
+    def _current_designation(c: sqlite3.Connection, split: str) -> dict | None:
+        r = c.execute(
+            "SELECT * FROM run_designations WHERE split=? ORDER BY designated_at DESC, rowid DESC LIMIT 1", (split,)
+        ).fetchone()
+        return dict(r) if r else None
 
     # ---- ask log & configuration ------------------------------------------------------
     def log_ask(self, question: str, role: str, mode: str, responses: list[dict]) -> str:

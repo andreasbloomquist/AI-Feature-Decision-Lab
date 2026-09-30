@@ -67,6 +67,51 @@ describe("Decision run of record", () => {
     expect(screen.queryByRole("button", { name: "Mark as decision run of record" })).toBeNull();
   });
 
+  it("reloads the run list after designating, so the picker marks the new run of record", async () => {
+    let designated = false;
+    const fetch = mockFetch({
+      "/api/decision": () => ({ body: decision(designated ? { designation } : {}) }),
+      "/api/runs/live-1/designate": () => {
+        designated = true;
+        return { body: { designation, history: [designation] } };
+      },
+      "/api/runs": () => ({ body: [run({ designated })] }),
+    });
+    render(<DecisionView runParam={null} />);
+    const runListCalls = () => fetch.mock.calls.filter(([url]) => new URL(String(url), "http://localhost").pathname === "/api/runs").length;
+    const button = await screen.findByRole("button", { name: "Mark as decision run of record" });
+    await waitFor(() => expect(runListCalls()).toBe(1));
+    fireEvent.change(screen.getByRole("textbox", { name: "Your name" }), { target: { value: "Dana" } });
+    await act(async () => fireEvent.click(button));
+    await waitFor(() => expect(runListCalls()).toBe(2));
+    expect(await screen.findByRole("option", { name: /run of record/ })).toBeInTheDocument();
+  });
+
+  it("shows the designation history once the run of record has moved", async () => {
+    const older = { ...designation, designation_id: "desig_0", run_id: "live-0", designated_by: "Ben", note: null, designated_at: "2026-09-29T10:00:00Z" };
+    mockFetch({ "/api/decision": decision({ designation, designation_history: [designation, older] }), "/api/runs": [] });
+    render(<DecisionView runParam={null} />);
+    const list = await screen.findByRole("list", { name: "Designation history" });
+    expect(list).toHaveTextContent("2026-09-30 13:37 UTC · live-1 · by Dana (PM)");
+    expect(list).toHaveTextContent("2026-09-29 10:00 UTC · live-0 · by Ben");
+  });
+
+  it("hides the history when there has only been one designation", async () => {
+    mockFetch({ "/api/decision": decision({ designation, designation_history: [designation] }), "/api/runs": [] });
+    render(<DecisionView runParam={null} />);
+    await screen.findByText("Decision run of record");
+    expect(screen.queryByRole("list", { name: "Designation history" })).toBeNull();
+  });
+
+  it("warns when the designated run is no longer usable and another run is shown", async () => {
+    const warning = "The decision run of record live-0 is no longer usable: gone. The newest usable live run is used instead.";
+    mockFetch({ "/api/decision": decision({ run_of_record_warning: warning }), "/api/runs": [] });
+    render(<DecisionView runParam={null} />);
+    const note = (await screen.findByText("Run of record not used.")).closest(".notice");
+    expect(note).toHaveClass("notice-warn");
+    expect(note).toHaveTextContent(warning);
+  });
+
   it("shows the designation banner with who, when and the note", async () => {
     mockFetch({ "/api/decision": decision({ designation }), "/api/runs": [run({ designated: true })] });
     render(<DecisionView runParam={null} />);
@@ -106,6 +151,14 @@ describe("Held-out usage", () => {
     expect(warning).toHaveClass("notice-warn");
     expect(warning).toHaveTextContent("the verdict may reflect tuning against it");
     expect(warning).toHaveTextContent("live-0, live-00, live-1");
+  });
+
+  it("labels runs that are still in progress", async () => {
+    const usage = { dataset_version: "v", evaluations: 2, run_ids: ["live-0", "live-1"], in_progress_run_ids: ["live-1"] };
+    mockFetch({ "/api/decision": decision({ held_out_usage: usage }), "/api/runs": [] });
+    render(<DecisionView runParam={null} />);
+    const warning = (await screen.findByText("Held-out set evaluated 2 times.")).closest(".notice");
+    expect(warning).toHaveTextContent("live-0, live-1 (in progress)");
   });
 });
 
