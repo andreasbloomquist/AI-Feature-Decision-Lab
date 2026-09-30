@@ -56,6 +56,92 @@ function humanOverrides(d: NonNullable<DecisionResponse["decision"]>): string | 
   return `Human review changed correctness labels: ${parts.join("; ")}.${more} Check those reviews in Inspect before relying on this verdict or the comparison.`;
 }
 
+type DecisionData = NonNullable<DecisionResponse["decision"]>;
+
+/** "2026-09-30T13:37:30Z" → "2026-09-30 13:37 UTC". */
+function dateText(iso: string): string {
+  return iso.replace("T", " ").replace(/:\d{2}Z$/, " UTC");
+}
+
+/**
+ * The decision run of record (R1.1): who named this run as the one the decision rests on, or a form to name it.
+ * Designating locks human reviews of this run's held-out responses, so its verdict can no longer move.
+ */
+function RunOfRecord({ d, recordElsewhere, onDesignated }: { d: DecisionData; recordElsewhere: boolean; onDesignated: () => void }) {
+  const [name, setName] = useState("");
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (d.designation) {
+    const r = d.designation;
+    return (
+      <div className="notice notice-record" role="note">
+        <strong>Decision run of record</strong> · by {r.designated_by} on {dateText(r.designated_at)}
+        {r.note && <> · {r.note}</>}
+        <p className="small">Human reviews of this run's held-out responses are locked, so this verdict can no longer change.</p>
+      </div>
+    );
+  }
+  if (d.designation_blocker) {
+    return (
+      <p className="muted small" role="note">
+        This run can't be the decision run of record: {d.designation_blocker}
+      </p>
+    );
+  }
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await api.designate(d.run_id, name.trim(), note);
+      onDesignated();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <section className="panel" aria-label="Decision run of record">
+      <h3>Mark as decision run of record</h3>
+      <p className="small">
+        Name the run this decision rests on. It becomes the run the Decision view and the memo use, even when newer runs exist, and human
+        reviews of its held-out responses are locked so the verdict can't be changed afterwards. Development-split reviews stay open.
+        {recordElsewhere && " Another run is the run of record now; marking this one moves the designation and unlocks the other run's reviews."}
+      </p>
+      <div className="record-form">
+        <input aria-label="Your name" placeholder="Your name (required)" required value={name} onChange={(e) => setName(e.target.value)} />
+        <input className="record-note" aria-label="Designation note" placeholder="Note (optional, e.g. the review meeting)" maxLength={2000} value={note} onChange={(e) => setNote(e.target.value)} />
+        <button className="btn btn-primary" onClick={save} disabled={saving || !name.trim()}>
+          {saving ? "Saving…" : "Mark as decision run of record"}
+        </button>
+      </div>
+      {error && <ErrorNotice error={error} />}
+    </section>
+  );
+}
+
+/** How often live runs have evaluated this dataset's held-out set (R1.2). More than once is a warning. */
+function HeldOutUsage({ d }: { d: DecisionData }) {
+  const u = d.held_out_usage;
+  if (!u) return null;
+  const times = `${u.evaluations} ${u.evaluations === 1 ? "time" : "times"}`;
+  if (u.evaluations > 1) {
+    return (
+      <div className="notice notice-warn" role="note">
+        <strong>Held-out set evaluated {times}.</strong> The held-out set has been evaluated {u.evaluations} times; the verdict may reflect
+        tuning against it. Dataset <span className="mono">{u.dataset_version}</span>, runs <span className="mono">{u.run_ids.join(", ")}</span>.
+      </div>
+    );
+  }
+  return (
+    <p className="muted small" role="note">
+      Held-out set evaluated {times} by live runs (dataset <span className="mono">{u.dataset_version}</span>).
+    </p>
+  );
+}
+
 export function DecisionView({ runParam }: { runParam: string | null }) {
   const runs = useRuns();
   const result = useAsync(`decision:${runParam ?? "latest"}`, () => api.decision(runParam ?? undefined));
@@ -143,6 +229,21 @@ export function DecisionView({ runParam }: { runParam: string | null }) {
               </p>
             )}
           </section>
+
+          {!isFixture && (
+            <>
+              <RunOfRecord
+                key={d.run_id}
+                d={d}
+                recordElsewhere={(runs.data ?? []).some((r) => r.designated && r.run_id !== d.run_id)}
+                onDesignated={() => {
+                  result.reload();
+                  runs.reload();
+                }}
+              />
+              <HeldOutUsage d={d} />
+            </>
+          )}
 
           {humanOverrides(d) && (
             <div className="notice notice-warn" role="note">

@@ -12,7 +12,15 @@ from .approaches.base import APPROACH_LABELS, APPROACH_NAMES
 from .corpus import get_corpus
 from .db import Database
 from .grading import citation_is_valid
-from .results import load_rows, run_cases, run_validity, summarize_rows
+from .results import (
+    designated_run,
+    designation_blocker,
+    held_out_usage,
+    load_rows,
+    run_cases,
+    run_validity,
+    summarize_rows,
+)
 from .settings import CONFIG_DIR
 
 OPS = {"<=": operator.le, ">=": operator.ge}
@@ -258,6 +266,7 @@ def build_decision(db: Database, run_id: str) -> dict:
 
     # Only a measured failure suggests an experiment; missing evidence is fixed by measuring, not tuning.
     failing = [c["id"] for c in per_approach.get(target, {}).get("criteria", []) if c["state"] == "fail"]
+    record = designated_run(db, split)
     return {
         "run_id": run_id,
         "run_mode": run["mode"],
@@ -280,6 +289,14 @@ def build_decision(db: Database, run_id: str) -> dict:
         else [{"criterion": f, "text": NEXT_EXPERIMENTS[f]} for f in failing if f in NEXT_EXPERIMENTS],
         "rollout_tests": ROLLOUT_TESTS,
         "limitations": limitations(split, list(run_cases(run).values())),
+        # The decision run of record: who named this run as the one the decision rests on (null when this
+        # run is not the current designation). Held-out reviews on it are locked.
+        "designation": record[1] if record and record[1]["run_id"] == run_id else None,
+        # Why this run cannot be designated (null when it can), so the UI only offers what the API accepts.
+        "designation_blocker": designation_blocker(db, run, split),
+        # How many live runs have looked at this split of this dataset version; more than one means the
+        # verdict may reflect tuning against the held-out set.
+        "held_out_usage": held_out_usage(db, run["dataset_version"], split),
     }
 
 
@@ -306,6 +323,22 @@ def human_override_note(decision: dict) -> str | None:
     if confirmed:
         note += f" {confirmed} more review(s) confirmed the automated label."
     return note + " Check those reviews in the Inspect view before relying on this verdict or the comparison."
+
+
+def held_out_usage_warning(decision: dict) -> str | None:
+    """A warning when the held-out set of the decision's dataset version was evaluated more than once.
+
+    Each extra look at held-out results is a chance to tune against them, so a pass after several runs is
+    weaker evidence than a pass on the first.
+    """
+    usage = decision.get("held_out_usage") or {}
+    n = usage.get("evaluations", 0)
+    if n <= 1:
+        return None
+    return (
+        f"The held-out set has been evaluated {n} times; the verdict may reflect tuning against it. "
+        f"Runs: {', '.join(usage['run_ids'])}."
+    )
 
 
 def _comparison(split_metrics: dict, target: str, baseline: str) -> dict | None:

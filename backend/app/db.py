@@ -1,4 +1,4 @@
-"""SQLite persistence for runs, responses, reviews, ad-hoc questions and configuration snapshots."""
+"""SQLite persistence for runs, responses, reviews, run designations, ad-hoc questions and configuration snapshots."""
 
 from __future__ import annotations
 
@@ -59,7 +59,18 @@ CREATE TABLE IF NOT EXISTS configuration (
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+-- Which run the decision rests on (the "decision run of record"), per split. Rows are never updated or
+-- deleted: the newest row is the current designation and the older rows are the audit trail.
+CREATE TABLE IF NOT EXISTS run_designations (
+    designation_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(run_id),
+    split TEXT NOT NULL,
+    designated_by TEXT NOT NULL,
+    note TEXT,
+    designated_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_responses_run ON responses(run_id);
+CREATE INDEX IF NOT EXISTS idx_designations_split ON run_designations(split);
 CREATE INDEX IF NOT EXISTS idx_reviews_response ON reviews(response_id);
 """
 
@@ -217,6 +228,36 @@ class Database:
         with self.connect() as c:
             c.execute("INSERT INTO reviews VALUES (:review_id,:response_id,:verdict,:note,:reviewer,:created_at)", rv)
         return rv
+
+    # ---- decision run of record ------------------------------------------------------
+    def add_designation(self, run_id: str, split: str, designated_by: str, note: str | None) -> dict:
+        d = {
+            "designation_id": new_id("desig"),
+            "run_id": run_id,
+            "split": split,
+            "designated_by": designated_by,
+            "note": note,
+            "designated_at": now_iso(),
+        }
+        with self.connect() as c:
+            c.execute(
+                "INSERT INTO run_designations VALUES "
+                "(:designation_id,:run_id,:split,:designated_by,:note,:designated_at)",
+                d,
+            )
+        return d
+
+    def designations(self, split: str) -> list[dict]:
+        """Every designation for `split`, newest first. The first one is the current decision run of record."""
+        with self.connect() as c:
+            rows = c.execute(
+                "SELECT * FROM run_designations WHERE split=? ORDER BY designated_at DESC, rowid DESC", (split,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def current_designation(self, split: str) -> dict | None:
+        rows = self.designations(split)
+        return rows[0] if rows else None
 
     # ---- ask log & configuration ------------------------------------------------------
     def log_ask(self, question: str, role: str, mode: str, responses: list[dict]) -> str:

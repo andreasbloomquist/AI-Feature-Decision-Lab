@@ -1,6 +1,6 @@
 import type {
   AppConfig,
-  ApproachId, ApproachResponse, CaseDetail, CaseRow, DecisionResponse, DocumentDetail, Health, RunDetail, RunSummary,
+  ApproachId, ApproachResponse, CaseDetail, CaseRow, DecisionResponse, Designation, DocumentDetail, Health, RunDetail, RunSummary,
 } from "./types";
 
 /** A non-2xx response. `status` is 0 when the server could not be reached at all. */
@@ -64,6 +64,11 @@ export const api = {
     request(`/api/responses/${encodeURIComponent(responseId)}/reviews`, {
       method: "POST",
       body: JSON.stringify({ verdict, note: note || null, reviewer }),
+    }),
+  designate: (runId: string, designatedBy: string, note: string) =>
+    request<{ designation: Designation; history: Designation[] }>(`/api/runs/${encodeURIComponent(runId)}/designate`, {
+      method: "POST",
+      body: JSON.stringify({ designated_by: designatedBy, note: note.trim() || null }),
     }),
   decision: (runId?: string) => request<DecisionResponse>(`/api/decision${qs({ run_id: runId })}`),
 };

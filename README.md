@@ -38,14 +38,14 @@ AI features are also non-deterministic. The same question can get a different an
 | **Compare options** | One prototype, judged on its own | Three approaches on the same 45 held-out questions, with the lift over search and the extra cost |
 | **Understand failure** | Anecdotes from the demo | Every failed case can be filtered by category, opened, and reviewed. Failures are grouped into types such as "invented answer" or "used a superseded policy" |
 | **Talk about risk honestly** | "It's about 90% accurate" | "32 of 35, interval 78–97%, on synthetic questions": every rate shows its sample size and uncertainty |
-| **Bring in judgement** | Engineers grade their own output | A PM or policy owner can override any grade in the Inspect view, with their name on it. The automated scores are kept alongside, and the Decision view says how many labels were overridden |
+| **Bring in judgement** | Engineers grade their own output | A PM or policy owner can override any grade in the Inspect view, with their name on it. The automated scores are kept alongside, and the Decision view says how many labels were overridden. Once a run is marked as the decision run of record, reviews of its held-out answers are locked |
 | **Communicate the decision** | A slide with a screenshot | A generated [decision memo](docs/decision_memo.md) with the proposed action, evidence, failure modes, limits and the next experiment |
 | **Decide again later** | Start over | Change a prompt, model or setting, run `make eval`, and switch between the old and new runs with the run picker. A side-by-side diff is planned ([R2.3](docs/ROADMAP.md#m2-works-on-your-feature)) |
 
 In practice, a PM uses it in four steps:
 1. **Before building,** write the criteria and the evaluation questions with the people who own the risk (here, HR, Finance and Security).
 2. **While building,** engineers tune on the 15 development questions only, so the 45 held-out questions stay a fair test.
-3. **At the decision point,** open the Decision view or the memo. It proposes *proceed to a limited pilot*, *do not launch yet*, *do not launch* or *insufficient evidence*, and says which criterion drove it.
+3. **At the decision point,** open the Decision view or the memo. It proposes *proceed to a limited pilot*, *do not launch yet*, *do not launch* or *insufficient evidence*, and says which criterion drove it. Mark the run you decide on as the **decision run of record**; the view also shows how many times the held-out set has been evaluated.
 4. **After the decision,** use the failing cases and the "what we would test before a real rollout" list to plan the next experiment or the pilot.
 
 [docs/for_product_managers.md](docs/for_product_managers.md) is a longer guide: how to run a decision review with the lab, how to read each view, and how to write good criteria and evaluation questions.
@@ -163,7 +163,7 @@ A few things to notice:
 - **Roles are `employee`, `hr`, `finance` and `admin`.** Try the salary question with `"role": "employee"`: every approach returns `"status": "abstained"`.
 - **Fixture mode only has saved answers for the sample questions.** A different question still gets a real search answer. Basic RAG returns a `fixture_missing` error. Guarded RAG either abstains (when retrieval is too weak to call the model at all) or returns `fixture_missing`.
 
-Other useful endpoints: `GET /api/health` (mode and model settings), `GET /api/decision` (the current recommendation), `GET /api/runs` (saved evaluation runs). The interactive API docs are at http://localhost:8000/docs.
+Other useful endpoints: `GET /api/health` (mode and model settings), `GET /api/decision` (the current recommendation), `GET /api/runs` (saved evaluation runs), `POST /api/runs/{run_id}/designate` (mark the decision run of record). The interactive API docs are at http://localhost:8000/docs.
 
 ### Troubleshooting
 
@@ -188,7 +188,8 @@ make demo                     # the app now runs in live mode
 
 A full run makes at most about 260 model calls: up to 120 answer calls (two RAG approaches × 60 cases), plus one judge call for each answered, answerable response from any approach (up to 141). The cost hasn't been measured yet. Estimate it from [`config/pricing.yaml`](config/pricing.yaml); the run records the real token counts. `make eval-dev` is about a quarter of that.
 
-- **The Decision view and [decision memo](docs/decision_memo.md) use the newest live run** that covers the held-out set.
+- **The Decision view and [decision memo](docs/decision_memo.md) use the decision run of record**, once someone has marked one in the Decision view (with their name and an optional note). Until then they use the newest full live run that covers the held-out set and isn't dominated by errors. Marking a run locks human reviews of its held-out answers, so the verdict can't move afterwards; development reviews stay open, and moving the designation to another run unlocks the old one. Every designation is kept as an audit trail.
+- **Every held-out evaluation is counted.** The Decision view and the memo show how many live runs have evaluated the held-out set of the current dataset version, including partial and failed runs, and warn when it's more than one: the verdict may then reflect tuning against the held-out set.
 - **Runs are stored twice and never overwritten.** Each run is a new SQLite record and a `results/runs/<run_id>.json` export, with the prompts, criteria, dataset and model settings it used.
 - **`make clean-db` deletes the local database only.** The exported JSON files stay.
 - **Tune on development data only.** The held-out set exists to be a fair test; tuning against it makes the verdict meaningless.
@@ -248,7 +249,7 @@ What's missing to make this easier (CSV import, plugging in your team's own syst
 Grading happens in three layers:
 - A deterministic grader always runs.
 - An optional model judge adds a verdict with its rationale, labelled *model-judged*.
-- A human reviewer can override the final label, and the automated scores are kept alongside.
+- A human reviewer can override the final label, and the automated scores are kept alongside. Held-out labels of the decision run of record are locked.
 
 **Sixty synthetic questions are enough to show how the decision gets made. They are not enough to prove production reliability.** The [evaluation report](docs/evaluation_report.md) lists the limits.
 
@@ -270,8 +271,8 @@ Grading happens in three layers:
 ## Roadmap
 
 The plan of record is [docs/ROADMAP.md](docs/ROADMAP.md). The next milestone, **M1: A verdict a skeptic accepts**, makes the verdict harder to game:
-- designate one run as the decision of record, and lock its reviews;
-- count how often the held-out set has been used;
+- designate one run as the decision of record, and lock its reviews (in progress);
+- count how often the held-out set has been used (in progress);
 - let criteria require the confidence interval, not just the point estimate, to clear the bar.
 
 After that, **M2** makes the lab work on your own feature: plug in your system over HTTP, import your own questions, and compare runs. The reasoning behind the priorities, and what we've deliberately chosen *not* to build, is in the [product review](docs/product_review.md).

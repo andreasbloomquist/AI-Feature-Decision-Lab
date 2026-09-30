@@ -14,7 +14,7 @@ from .approaches.base import APPROACH_LABELS, APPROACH_NAMES
 from .corpus import get_corpus
 from .dataset import load_dataset
 from .db import Database
-from .decision import build_decision, criteria_config, human_override_note, limitations
+from .decision import build_decision, criteria_config, held_out_usage_warning, human_override_note, limitations
 from .evaluation import ensure_fixture_run
 from .prompts import load_approach_config
 from .results import latest_runs, load_rows, run_cases, summarize_rows
@@ -288,6 +288,7 @@ def decision_memo(db: Database) -> str:
             f"**To:** Operations lead · **Re:** limited rollout of guarded RAG · **Evidence:** live run "
             f"`{live['run_id']}` ({live['created_at']}, `{live['model_config']['model']}`), held-out set of {d['n_cases']} cases\n\n"
         )
+        s += _integrity_lines(d)
         s += _memo_body(db, d, live["run_id"], example=False)
         return "".join(s)
     s.append(
@@ -314,6 +315,33 @@ def decision_memo(db: Database) -> str:
         )
         s += _memo_body(db, d, fixture["run_id"], example=True)
     return "".join(s)
+
+
+def _integrity_lines(d: dict) -> list[str]:
+    """Which run the decision rests on, and how often its held-out set was evaluated (roadmap R1.1, R1.2)."""
+    s = []
+    rec = d.get("designation")
+    if rec:
+        note = f" Note: {' '.join(rec['note'].split())}" if rec.get("note") else ""
+        s.append(
+            f"**Decision run of record:** designated by {rec['designated_by']} on {rec['designated_at']}. "
+            f"Human reviews of its held-out responses are locked.{note}\n\n"
+        )
+    else:
+        s.append(
+            "**Decision run of record:** none designated. This memo uses the newest usable live run, and human "
+            "reviews of its held-out responses can still change the verdict. Mark the run of record in the "
+            "Decision view.\n\n"
+        )
+    usage = d.get("held_out_usage")
+    if usage:
+        s.append(
+            f"**Held-out usage:** live runs have evaluated the held-out set of dataset "
+            f"`{usage['dataset_version']}` {usage['evaluations']} time(s).\n\n"
+        )
+    if warning := held_out_usage_warning(d):
+        s.append(f"> **Warning: repeated held-out evaluation.** {warning}\n\n")
+    return s
 
 
 def _memo_body(db: Database, d: dict, run_id: str, example: bool) -> list[str]:

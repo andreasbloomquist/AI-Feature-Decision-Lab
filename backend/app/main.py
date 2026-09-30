@@ -25,7 +25,7 @@ from .db import Database
 from .decision import build_decision, criteria_config
 from .evaluation import config_snapshot, ensure_fixture_run, export_run
 from .llm import LLMProvider, make_provider
-from .results import latest_runs, load_rows, summarize_rows
+from .results import DECISION_SPLIT, designation_blocker, latest_runs, load_rows, run_cases, summarize_rows
 from .retrieval import Retriever
 from .schemas import ApproachResponse
 from .settings import RESULTS_DIR, ROOT, Settings, load_settings, public_settings
@@ -189,9 +189,34 @@ def _run_or_404(db: Database, run_id: str) -> dict:
 @app.get("/api/runs")
 def list_runs(db: DbDep) -> list[dict]:
     # `latest` marks the live run the Decision view uses by default, so the UI never has to repeat
-    # the rules for skipping development-only, partial and error-dominated runs.
+    # the rules for skipping development-only, partial and error-dominated runs. `designated` marks the
+    # decision run of record; when there is one, it is also the `latest` run.
     live, _ = latest_runs(db)
-    return [{**r, "latest": live is not None and r["run_id"] == live["run_id"]} for r in db.list_runs()]
+    record = db.current_designation(DECISION_SPLIT)
+    return [
+        {
+            **r,
+            "latest": live is not None and r["run_id"] == live["run_id"],
+            "designated": record is not None and r["run_id"] == record["run_id"],
+        }
+        for r in db.list_runs()
+    ]
+
+
+class DesignationRequest(BaseModel):
+    # Naming the run a decision rests on is an accountable act, so it says who did it.
+    designated_by: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+    note: Annotated[str, StringConstraints(strip_whitespace=True, max_length=2000)] | None = None
+
+
+@app.post("/api/runs/{run_id}/designate")
+def designate_run(run_id: str, req: DesignationRequest, db: DbDep) -> dict:
+    """Make this run the decision run of record. Earlier designations are kept as an audit trail."""
+    run = _run_or_404(db, run_id)
+    if blocker := designation_blocker(db, run, DECISION_SPLIT):
+        raise HTTPException(409, detail=blocker)
+    designation = db.add_designation(run_id, DECISION_SPLIT, req.designated_by, req.note or None)
+    return {"designation": designation, "history": db.designations(DECISION_SPLIT)}
 
 
 @app.get("/api/runs/{run_id}")
@@ -272,10 +297,18 @@ def add_review(response_id: str, req: ReviewRequest, db: DbDep) -> dict:
     row = db.get_response(response_id)
     if not row:
         raise HTTPException(404, detail="response not found")
+    run = db.get_run(row["run_id"])
+    record = db.current_designation(DECISION_SPLIT)
+    if (
+        record
+        and record["run_id"] == row["run_id"]
+        and (run_cases(run).get(row["case_id"]) or {}).get("split") == DECISION_SPLIT
+    ):
+        # The decision rests on these labels; changing them now would change a verdict already taken.
+        raise HTTPException(409, detail="reviews are locked: this response belongs to the decision run of record")
     review = db.add_review(response_id, req.verdict, req.note, req.reviewer)
     # The automated grade and judge verdict are never modified; the review is stored alongside.
     updated = db.get_response(response_id)
-    run = db.get_run(row["run_id"])
     # Keep the committed export in sync, but never export a run that is still being written.
     if run["mode"] == "live" and run["status"] != "running":
         export_run(db, row["run_id"], RESULTS_DIR / "runs")

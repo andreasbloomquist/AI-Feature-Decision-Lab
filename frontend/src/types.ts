@@ -107,8 +107,28 @@ export interface RunSummary {
   n_responses: number;
   /** A run limited to some cases or approaches (a debug run); never used as the default. */
   partial?: boolean;
-  /** The live run the backend uses for the decision (full, held-out, not dominated by errors). */
+  /** The live run the backend uses for the decision: the run of record, else the newest full, usable held-out run. */
   latest?: boolean;
+  /** The decision run of record. Human reviews of its held-out responses are locked. */
+  designated?: boolean;
+}
+
+/** Who named a run as the one the decision rests on. The newest designation is the current one. */
+export interface Designation {
+  designation_id: string;
+  run_id: string;
+  split: string;
+  designated_by: string;
+  note: string | null;
+  designated_at: string;
+}
+
+/** How many live runs have evaluated the held-out split of one dataset version. */
+export interface HeldOutUsage {
+  dataset_version: string;
+  split?: string;
+  evaluations: number;
+  run_ids: string[];
 }
 
 export interface RunDetail extends RunSummary {
@@ -270,6 +290,11 @@ export interface Decision {
   next_experiments: { criterion: string; text: string }[];
   rollout_tests: string[];
   limitations: string[];
+  /** Set when this run is the current decision run of record; null otherwise. */
+  designation?: Designation | null;
+  /** Why this run cannot be designated (fixture, partial, no held-out split, error-dominated); null when it can. */
+  designation_blocker?: string | null;
+  held_out_usage?: HeldOutUsage | null;
 }
 
 export interface DecisionResponse {

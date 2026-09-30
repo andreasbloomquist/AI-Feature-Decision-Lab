@@ -109,13 +109,82 @@ def _is_usable_live_run(db: Database, run: dict, split: str) -> bool:
     return _USABLE_CACHE[key]
 
 
-def latest_runs(db: Database, split: str = "held_out") -> tuple[dict | None, dict | None]:
-    """(newest usable live run that covers `split`, newest fixture run); either may be None.
+DECISION_SPLIT = "held_out"
 
-    A development-only live run (`make eval-dev`), a partial debug run (`--case`, `--approach`) and a
-    run dominated by provider errors are all skipped, so none of them hides the last good full result.
+
+def designation_blocker(db: Database, run: dict, split: str = DECISION_SPLIT) -> str | None:
+    """Why `run` cannot be the decision run of record for `split`, or None when it can.
+
+    The rule is the same as for the default decision run (`_is_usable_live_run`); the reasons only make
+    the refusal readable.
+    """
+    if run["mode"] != "live":
+        return "Fixture runs are demonstration data and can never be the decision run of record."
+    if not run["status"].startswith("completed"):
+        return f"Only a completed run can be the decision run of record (this run is {run['status']})."
+    if run.get("partial"):
+        return "A partial run (limited to some cases or approaches) can never be the decision run of record."
+    if split not in run["splits"]:
+        return (
+            f"This run does not cover the {split.replace('_', '-')} split, so it cannot be the decision run of record."
+        )
+    if not _is_usable_live_run(db, run, split):
+        return (
+            "This run has no usable results for the target approach: it is missing or dominated by provider "
+            "errors, so it cannot be the decision run of record."
+        )
+    return None
+
+
+def designated_run(db: Database, split: str = DECISION_SPLIT) -> tuple[dict, dict] | None:
+    """(run, designation) for the current decision run of record for `split`, or None when there is none.
+
+    A designation is only accepted for a usable run and usability never changes after a run completes, so
+    the check here is a safeguard, not a rule that can move the decision.
+    """
+    designation = db.current_designation(split)
+    if designation is None:
+        return None
+    run = next((r for r in db.list_runs() if r["run_id"] == designation["run_id"]), None)
+    if run is None or designation_blocker(db, run, split) is not None:
+        return None
+    return run, designation
+
+
+def latest_runs(db: Database, split: str = DECISION_SPLIT) -> tuple[dict | None, dict | None]:
+    """(the live decision run for `split`, newest fixture run); either may be None.
+
+    The decision run is the designated decision run of record when there is one. Otherwise it is the newest
+    usable live run: a development-only live run (`make eval-dev`), a partial debug run (`--case`,
+    `--approach`) and a run dominated by provider errors are all skipped, so none of them hides the last
+    good full result.
     """
     runs = db.list_runs()
-    live = next((r for r in runs if _is_usable_live_run(db, r, split)), None)
+    record = designated_run(db, split)
+    live = record[0] if record else next((r for r in runs if _is_usable_live_run(db, r, split)), None)
     fixture = next((r for r in runs if r["mode"] == "fixture"), None)
     return live, fixture
+
+
+def held_out_usage(db: Database, dataset_version: str, split: str = DECISION_SPLIT) -> dict:
+    """How many live runs have evaluated `split` of this dataset version.
+
+    Every live run that exposed answers on the split counts, whatever its outcome: partial, failed and
+    error-dominated runs included, because each one let someone look at held-out results. Only runs still
+    being written are left out. Fixture runs never count: they are not model evaluations.
+    """
+    runs = [
+        r
+        for r in db.list_runs()
+        if r["mode"] == "live"
+        and r["status"] != "running"
+        and r["dataset_version"] == dataset_version
+        and split in r["splits"]
+    ]
+    runs.sort(key=lambda r: (r["created_at"], r["run_id"]))
+    return {
+        "dataset_version": dataset_version,
+        "split": split,
+        "evaluations": len(runs),
+        "run_ids": [r["run_id"] for r in runs],
+    }

@@ -36,8 +36,9 @@ Each of these is enforced by tests. A change that needs to relax one is a produc
 6. **Guarded RAG never repairs an answer.** If validation fails, the answer is withheld (status `error`, with a `guard_reason`). There is no second model call.
 7. **A disclosure is a hard stop** at any sample size, and never counts as a success.
 8. **Human reviews are visible.** A review needs a verdict and a reviewer name, and it keeps the automated grade. Reviews that change a label are disclosed on the Decision view and in the memo, for both the target and the baseline (`correctness.human_reviews`, `human_override_note`).
-9. **API changes are additive.** Add fields; never rename or remove them. Update `frontend/src/types.ts` in the same change.
-10. **Secrets stay in the environment.** Keys come only from the environment or `.env`. They never appear in responses, logs, the database, exported runs or the browser. `test_no_secret_in_any_response_database_or_export` checks this.
+9. **The decision run of record is fixed.** When a run is designated (`POST /api/runs/{run_id}/designate`, table `run_designations`), it is the decision run everywhere (`results.latest_runs`), and reviews of its held-out responses are refused with 409. Only a run that passes `_is_usable_live_run` can be designated; fixture runs never. Designations are append-only: the newest is current, and the rest are the audit trail. Every live evaluation of the held-out set is counted (`results.held_out_usage`) and shown, never hidden.
+10. **API changes are additive.** Add fields; never rename or remove them. Update `frontend/src/types.ts` in the same change.
+11. **Secrets stay in the environment.** Keys come only from the environment or `.env`. They never appear in responses, logs, the database, exported runs or the browser. `test_no_secret_in_any_response_database_or_export` checks this.
 
 ## Where things live
 
@@ -52,11 +53,11 @@ Each of these is enforced by tests. A change that needs to relax one is a produc
 | `backend/app/citations.py` | Parsing, validation and redaction of citation markers |
 | `backend/app/grading.py`, `judge.py` | Deterministic grader; optional model judge |
 | `backend/app/metrics.py` | Rates with Wilson intervals, nearest-rank percentiles, cost, error split |
-| `backend/app/results.py` | Read side: rows joined to cases, `succeeded`, `run_validity`, `latest_runs` |
+| `backend/app/results.py` | Read side: rows joined to cases, `succeeded`, `run_validity`, `latest_runs` (the designated run of record, else the newest usable live run), `designation_blocker`, `held_out_usage` |
 | `backend/app/decision.py` | Applies the criteria and builds the recommendation |
 | `backend/app/evaluation.py` | Evaluation runner and CLI (`python -m app.evaluation --help`) |
 | `backend/app/reports.py` | Writes `docs/evaluation_report.md` and `docs/decision_memo.md` |
-| `backend/app/main.py` | FastAPI routes; also serves the built UI |
+| `backend/app/main.py` | FastAPI routes, including `POST /api/runs/{run_id}/designate` and the held-out review lock; also serves the built UI |
 | `frontend/src/views/` | Ask, Compare, Inspect, Decision |
 | `frontend/src/useAsync.ts` | The only data-loading hook. It never returns data for a stale key |
 
@@ -76,7 +77,7 @@ Each of these is enforced by tests. A change that needs to relax one is a produc
 - **Ask before:**
   - changing launch criteria thresholds or the dataset;
   - spending API credits;
-  - deleting runs in `results/`;
+  - deleting runs in `results/` or rows of `run_designations`;
   - changing anything that relaxes an invariant above.
 
 ## Documentation map

@@ -115,6 +115,7 @@ select:focus, input:focus, textarea:focus, button:focus-visible, a:focus-visible
 .notice p { margin: 4px 0 0; }
 .notice-warn { border-left-color: var(--warn); background: var(--warn-soft); }
 .notice-bad { border-left-color: var(--bad); background: var(--bad-soft); }
+.notice-record { border-left-color: var(--accent); background: var(--accent-soft); }
 .notice-demo { border-left-color: #d8b43c; background: var(--demo-soft); color: #4a3a07; }
 
 /* ---- ask ---- */
@@ -251,6 +252,9 @@ select:focus, input:focus, textarea:focus, button:focus-visible, a:focus-visible
 .review-actions input { flex: 1; }
 
 /* ---- decision ---- */
+.record-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-top: 8px; }
+.record-form input { min-width: 200px; }
+.record-form .record-note { flex: 1; }
 .verdict { border-left: 5px solid var(--border-strong); }
 .verdict h2 { font-size: 22px; }
 .verdict-limited_pilot { border-left-color: var(--ok); }
