@@ -224,6 +224,10 @@ export interface Criterion {
   state: "pass" | "fail" | "insufficient";
   reason: string | null;
   confidence: "low" | "ok" | null;
+  /** "interval": the whole 95% interval must meet the threshold. Absent on older runs, which means "point". */
+  evidence?: "point" | "interval";
+  /** Minimum evaluated cases for this criterion (per-criterion override of min_sample_size). */
+  min_n?: number;
   example_case_ids: string[];
 }
 
@@ -298,6 +302,8 @@ export interface CriterionConfig {
   comparator: "<=" | ">=";
   threshold: number;
   unit: Criterion["unit"];
+  evidence?: "point" | "interval";
+  min_n?: number;
 }
 
 export interface LaunchCriteria {

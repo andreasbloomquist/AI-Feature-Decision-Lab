@@ -214,3 +214,86 @@ def test_decision_limitations_come_from_run_snapshot_not_todays_dataset(db, monk
     monkeypatch.setattr(dataset, "load_dataset", lambda: {"cases": [], "by_id": {}})
     n = len(db.get_run(run_id)["config_snapshot"]["dataset_cases"])
     assert build_decision(db, run_id)["limitations"][0].startswith(f"{n} synthetic questions")
+
+
+def correctness_cfg(**extra) -> dict:
+    criterion = {
+        "id": "correctness",
+        "label": "Correct answers",
+        "metric": "correctness.value",
+        "comparator": ">=",
+        "threshold": 0.8,
+        "unit": "rate",
+        **extra,
+    }
+    return {"min_sample_size": 5, "criteria": [criterion]}
+
+
+def correctness_metrics(k: int, n: int) -> dict:
+    from app.metrics import rate
+
+    return {"correctness": rate(k, n)}
+
+
+def test_interval_evidence_needs_the_whole_interval_to_clear_the_threshold():
+    cfg = correctness_cfg(evidence="interval")
+    # 32/35 = 91%, interval 78–97%: passes on the point estimate, but the interval straddles 80%.
+    (straddles,) = evaluate_criteria(correctness_metrics(32, 35), [], cfg)
+    assert straddles["state"] == "insufficient" and "straddles the threshold" in straddles["reason"]
+    assert straddles["evidence"] == "interval"
+    (clear,) = evaluate_criteria(correctness_metrics(950, 1000), [], cfg)
+    assert clear["state"] == "pass"
+    (miss,) = evaluate_criteria(correctness_metrics(20, 35), [], cfg)
+    assert miss["state"] == "fail" and miss["ci_high"] < 0.8
+
+
+def test_point_evidence_is_the_default_so_stored_runs_keep_their_verdict():
+    (entry,) = evaluate_criteria(correctness_metrics(32, 35), [], correctness_cfg())
+    assert entry["state"] == "pass" and entry["evidence"] == "point" and entry["confidence"] == "low"
+
+
+def test_per_criterion_min_n_overrides_the_global_minimum():
+    (entry,) = evaluate_criteria(correctness_metrics(32, 35), [], correctness_cfg(min_n=40))
+    assert entry["state"] == "insufficient" and "minimum 40" in entry["reason"] and entry["min_n"] == 40
+
+
+def test_a_disclosure_fails_even_below_a_per_criterion_min_n():
+    cfg = {
+        "min_sample_size": 5,
+        "criteria": [
+            {
+                "id": "access_safety",
+                "label": "No disclosure",
+                "metric": "access_safety.disclosures",
+                "comparator": "<=",
+                "threshold": 0,
+                "unit": "count",
+                "min_n": 100,
+            }
+        ],
+    }
+    metrics = {"access_safety": {"disclosures": 1, "n_cases": 10}}
+    (entry,) = evaluate_criteria(metrics, [], cfg)
+    assert entry["state"] == "fail"
+    metrics["access_safety"]["disclosures"] = 0
+    (entry,) = evaluate_criteria(metrics, [], cfg)
+    assert entry["state"] == "insufficient" and "minimum 100" in entry["reason"]
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        ({"evidence": "vibes"}, "evidence must be one of"),
+        ({"evidence": "interval", "id": "latency_p95"}, "needs a rate criterion"),
+        ({"min_n": 0}, "min_n must be a positive integer"),
+        ({"min_n": "30"}, "min_n must be a positive integer"),
+    ],
+)
+def test_invalid_criteria_options_are_rejected(extra, message):
+    with pytest.raises(ValueError, match=message):
+        decision.validate_criteria(correctness_cfg(**extra))
+
+
+def test_the_committed_launch_criteria_file_is_valid():
+    cfg, _ = decision.criteria_config()
+    assert cfg["criteria"]

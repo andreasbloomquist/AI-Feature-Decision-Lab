@@ -36,9 +36,41 @@ NEXT_EXPERIMENTS = {
 }
 
 
+# How much evidence a criterion needs before it counts as met (`evidence` in launch_criteria.yaml):
+# - "point": the observed value must meet the threshold (the default).
+# - "interval": the whole 95% interval must meet it. A criterion whose interval straddles the threshold is
+#   "insufficient evidence": more cases are needed before anyone can say which side it is on.
+EVIDENCE_MODES = ("point", "interval")
+# Criteria whose metric is a rate with a Wilson interval, so "interval" evidence can apply to them.
+RATE_CRITERIA = ("correctness", "citation_validity", "abstention_quality")
+
+
+def validate_criteria(cfg: dict) -> dict:
+    """Reject criteria that would be applied in a way nobody intended. Returns `cfg` unchanged."""
+    for c in cfg.get("criteria", []):
+        evidence = c.get("evidence", "point")
+        if evidence not in EVIDENCE_MODES:
+            raise ValueError(f"criterion {c['id']}: evidence must be one of {EVIDENCE_MODES}, not {evidence!r}")
+        if evidence == "interval" and c["id"] not in RATE_CRITERIA:
+            raise ValueError(
+                f"criterion {c['id']}: evidence 'interval' needs a rate criterion ({', '.join(RATE_CRITERIA)})"
+            )
+        min_n = c.get("min_n")
+        if min_n is not None and (not isinstance(min_n, int) or isinstance(min_n, bool) or min_n < 1):
+            raise ValueError(f"criterion {c['id']}: min_n must be a positive integer, not {min_n!r}")
+    return cfg
+
+
 def criteria_config() -> tuple[dict, str]:
     raw = (CONFIG_DIR / "launch_criteria.yaml").read_text()
-    return yaml.safe_load(raw), hashlib.sha256(raw.encode()).hexdigest()[:12]
+    return validate_criteria(yaml.safe_load(raw)), hashlib.sha256(raw.encode()).hexdigest()[:12]
+
+
+def _interval_state(comp: str, threshold: float, low: float, high: float) -> str:
+    """Where a 95% interval sits relative to a threshold: wholly meeting it, wholly missing it, or straddling it."""
+    if comp == ">=":
+        return "pass" if low >= threshold else "fail" if high < threshold else "insufficient"
+    return "pass" if high <= threshold else "fail" if low > threshold else "insufficient"
 
 
 def _get(metrics: dict, dotted: str):
@@ -78,11 +110,13 @@ def _examples(criterion_id: str, rows: list[dict], threshold: float) -> list[str
 
 
 def evaluate_criteria(metrics: dict, rows: list[dict], cfg: dict) -> list[dict]:
-    min_n = cfg.get("min_sample_size", 5)
+    default_min_n = cfg.get("min_sample_size", 5)
     min_coverage = cfg.get("min_measurement_coverage", 1.0)
     out = []
     for c in cfg["criteria"]:
         cid, thr, comp = c["id"], c["threshold"], c["comparator"]
+        evidence = c.get("evidence", "point")
+        min_n = c.get("min_n", default_min_n)
         value = _get(metrics, c["metric"])
         entry = {
             "id": cid,
@@ -95,6 +129,8 @@ def evaluate_criteria(metrics: dict, rows: list[dict], cfg: dict) -> list[dict]:
             "state": None,
             "reason": None,
             "confidence": None,
+            "evidence": evidence,
+            "min_n": min_n,
             "example_case_ids": [],
         }
         if cid == "access_safety":
@@ -122,6 +158,13 @@ def evaluate_criteria(metrics: dict, rows: list[dict], cfg: dict) -> list[dict]:
         elif value is None or (entry["n"] is not None and entry["n"] < min_n):
             entry["state"] = "insufficient"
             entry["reason"] = f"only {entry['n'] or 0} evaluated cases (minimum {min_n})"
+        elif evidence == "interval":
+            entry["state"] = _interval_state(comp, thr, entry["ci_low"], entry["ci_high"])
+            if entry["state"] == "insufficient":
+                entry["reason"] = (
+                    f"95% interval {entry['ci_low']:.1%}–{entry['ci_high']:.1%} straddles the threshold; "
+                    "this criterion requires the whole interval to clear it, so more cases are needed"
+                )
         else:
             entry["state"] = "pass" if OPS[comp](value, thr) else "fail"
             if "ci_low" in entry and entry["ci_low"] is not None:

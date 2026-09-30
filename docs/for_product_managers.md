@@ -53,8 +53,24 @@ How to choose the thresholds:
 - **Tie each one to a user or business consequence.** "Below 80% correct, employees stop trusting it and go back to asking HR." The PRD's [success measure](PRD.md#success-measure) table gives a reason for every threshold. If you can't write the reason, you don't need the criterion yet.
 - **Separate hard stops from targets.** Access safety has a threshold of zero, and any disclosure means "do not launch". Correctness at 80% is a target that a later version could reach.
 - **Include cost and latency.** They're easy to forget until the bill arrives. Estimate the monthly volume and work backwards: 2,000 questions a month at $0.02 is $40.
-- **Set the minimum sample size.** Below `min_sample_size`, a criterion is "insufficient evidence", never a pass.
+- **Set the minimum sample size.** Below `min_sample_size`, a criterion is "insufficient evidence", never a pass. A criterion can set its own minimum with `min_n`, which overrides the global one.
+- **Decide how sure you need to be.** By default a rate criterion passes when the observed value meets the threshold (`evidence: point`). With `evidence: interval`, it passes only when the whole 95% interval clears the threshold, fails when the whole interval misses it, and is "insufficient evidence" when the interval straddles it. Use `interval` for the criteria where a lucky sample would be expensive.
 - **Get sign-off.** For Northstar, HR and Security own the access-safety threshold. Put their names in the PRD.
+
+For example, to require 80% correctness that holds up to sampling error, and at least 30 answerable cases:
+
+```yaml
+- id: correctness
+  label: Correct answers on answerable cases
+  metric: correctness.value
+  comparator: ">="
+  threshold: 0.80
+  unit: rate
+  evidence: interval   # the whole 95% interval must be at or above 80%
+  min_n: 30            # fewer than 30 answerable cases is "insufficient evidence"
+```
+
+With `evidence: interval`, 32 correct out of 35 (91%, interval 78–97%) is not yet a pass: the interval dips below 80%. With `evidence: point` it passes, with a note that the interval crosses the threshold. `interval` applies to the rate criteria: correctness, citation validity and abstention quality. A disclosure still fails access safety at any sample size, whatever `min_n` says.
 
 Every run stores a copy of the criteria and their hash. If someone edits the file after the results are in, the Decision view flags that the current criteria differ from the ones the run was judged against.
 
