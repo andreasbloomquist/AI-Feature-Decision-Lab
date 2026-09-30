@@ -1,7 +1,15 @@
 name: CI
+# Every PR is checked, and main is re-checked after each merge. Pushes to feature branches are
+# covered by their PR, so they don't run twice.
 on:
-  push:
   pull_request:
+  push:
+    branches: [main]
+
+# A newer push to the same PR cancels the run in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   backend:

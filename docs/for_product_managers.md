@@ -75,7 +75,7 @@ Good sets share a few traits:
 - **Include near-miss unanswerable questions.** "What is the phone stipend?" when only an *internet* stipend exists. These catch invented answers better than obviously off-topic questions.
 - **Use real questions when you can.** Support tickets, Slack threads and search logs beat questions written by the person who wrote the documents. Synthetic questions tend to be too clean.
 - **Keep a held-out split and don't look at it while tuning.** Northstar uses 15 development and 45 held-out cases. Engineers tune prompts and thresholds with `make eval-dev`; only the final run touches the held-out set. If you tune on the test, the verdict means nothing.
-- **Write required facts as the minimum a correct answer must contain.** Use aliases (`"$1,000"`, `"$1000"`) for figures. The deterministic grader is strict about figures and lenient about wording; the model judge and your review cover the rest.
+- **Write required facts as the minimum a correct answer must contain.** Use aliases for wording variants (`"vp"`, `"vice president"`). Thousands separators are normalized for you, so `$1,000` and `$1000` already match. The deterministic grader is strict about figures and lenient about wording; the model judge and your review cover the rest.
 
 ### 4. Read the results
 
@@ -86,7 +86,7 @@ Run `make eval` (or have an engineer run it) and open the app.
 **Compare** is the scorecard for the held-out set. Read it like this:
 - Every percentage has its count, for example 32/35. With 6 unanswerable questions, one case moves the rate by 17 points, so the count matters more than the percentage.
 - Hover over a rate for its 95% interval. If the interval crosses a threshold, you don't know which side you're on yet.
-- To see *where* an approach is weak, filter Inspect by category, or read the *By category* table in the generated [evaluation report](evaluation_report.md). Search typically fails multi-document questions; basic RAG tends to invent answers to unanswerable ones.
+- To see *where* an approach is weak, filter Inspect by category, or read the *By category* table in the generated [evaluation report](evaluation_report.md). Expected weaknesses: search on multi-document questions, and basic RAG inventing answers to unanswerable ones. These are hypotheses until a live run confirms or refutes them.
 - The quality-versus-cost chart shows the trade-off at a glance. An approach without measured cost isn't plotted, rather than being plotted at $0.
 
 **Inspect** is where you spend the most time. Filter by category, approach and outcome, open a case, and read the question, the reference answer, each approach's answer, the grading, and the raw model output. Use it to:
@@ -115,7 +115,7 @@ The [decision memo](decision_memo.md) is generated from the run (`make reports`)
 
 ### 6. Decide again when something changes
 
-AI features drift. The model version changes, a prompt gets edited, documents are updated. Each change is a new run: `make eval` creates it without overwriting anything, and the run picker in Compare and Decision lets you compare it with the old one. Re-run the evaluation before any change ships, and treat a new failure like a failing test.
+AI features drift. The model version changes, a prompt gets edited, documents are updated. Each change is a new run: `make eval` creates it without overwriting anything, and use the run picker in Compare and Decision to switch between the old and new runs. A side-by-side diff is roadmap item [R2.3](ROADMAP.md#m2-works-on-your-feature). Re-run the evaluation before any change ships, and treat a new failure like a failing test.
 
 ## Running a decision review
 
@@ -137,4 +137,4 @@ A 45-minute agenda that works well with the lab open on a shared screen:
 
 **Is 45 held-out questions enough?** Enough to decide whether to run a pilot, not to launch to everyone. The memo's rollout tests (shadow mode on real questions, red-teaming access control, usability sessions) are the next layer of evidence.
 
-**Can I use this for a feature other than policy Q&A?** The data and config are separate from the code, so any retrieval-based assistant works by swapping the documents, roles, questions and criteria; see [Use it for your own feature](../README.md#use-it-for-your-own-feature). Features that take actions or hold multi-turn conversations would need new approaches and grading. The [product review](product_review.md) lists that as an enhancement.
+**Can I use this for a feature other than policy Q&A?** The data and config are separate from the code, so any retrieval-based assistant works by swapping the documents, roles, questions and criteria; see [Use it for your own feature](../README.md#use-it-for-your-own-feature). Features that take actions or hold multi-turn conversations would need new approaches and grading. That is roadmap item [R4.1](ROADMAP.md#m4-beyond-qa).
