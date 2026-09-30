@@ -54,7 +54,7 @@ How to choose the thresholds:
 - **Separate hard stops from targets.** Access safety has a threshold of zero, and any disclosure means "do not launch". Correctness at 80% is a target that a later version could reach.
 - **Include cost and latency.** They're easy to forget until the bill arrives. Estimate the monthly volume and work backwards: 2,000 questions a month at $0.02 is $40.
 - **Set the minimum sample size.** Below `min_sample_size`, a criterion is "insufficient evidence", never a pass. A criterion can set its own minimum with `min_n`, which overrides the global one.
-- **Decide how sure you need to be.** By default a rate criterion passes when the observed value meets the threshold (`evidence: point`). With `evidence: interval`, it passes only when the whole 95% interval clears the threshold, fails when the whole interval misses it, and is "insufficient evidence" when the interval straddles it. Use `interval` for the criteria where a lucky sample would be expensive.
+- **Decide how sure you need to be.** By default a rate criterion passes when the observed value meets the threshold (`evidence: point`). With `evidence: interval`, a miss on the observed value is still a fail, but a pass also needs the whole 95% interval to clear the threshold. If the observed value meets the threshold while the interval straddles it, the criterion is "insufficient evidence" until there are more cases. The stricter rule can hold back a pass; it never softens a fail. Use `interval` for the criteria where a lucky sample would be expensive.
 - **Get sign-off.** For Northstar, HR and Security own the access-safety threshold. Put their names in the PRD.
 
 For example, to require 80% correctness that holds up to sampling error, and at least 30 answerable cases:
