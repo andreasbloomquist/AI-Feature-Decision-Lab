@@ -7,14 +7,16 @@ import math
 from .grading import citation_is_valid, final_label, is_withheld
 
 
-def wilson(k: int, n: int, z: float = 1.96) -> tuple[float | None, float | None]:
+def wilson(k: int, n: int, z: float = 1.96, *, digits: int | None = 4) -> tuple[float | None, float | None]:
+    """Wilson 95% interval. Rounded for display; pass `digits=None` for the exact bounds a decision compares."""
     if n == 0:
         return None, None
     p = k / n
     denom = 1 + z * z / n
     centre = (p + z * z / (2 * n)) / denom
     half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom
-    return round(max(0.0, centre - half), 4), round(min(1.0, centre + half), 4)
+    low, high = max(0.0, centre - half), min(1.0, centre + half)
+    return (low, high) if digits is None else (round(low, digits), round(high, digits))
 
 
 def rate(k: int, n: int, **extra) -> dict:

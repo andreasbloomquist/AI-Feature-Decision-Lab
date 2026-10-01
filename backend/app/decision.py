@@ -12,6 +12,7 @@ from .approaches.base import APPROACH_LABELS, APPROACH_NAMES
 from .corpus import get_corpus
 from .db import Database
 from .grading import citation_is_valid
+from .metrics import wilson
 from .results import load_rows, run_cases, run_validity, summarize_rows
 from .settings import CONFIG_DIR
 
@@ -36,9 +37,56 @@ NEXT_EXPERIMENTS = {
 }
 
 
+# How much evidence a criterion needs before it counts as met (`evidence` in launch_criteria.yaml):
+# - "point": the observed value must meet the threshold (the default).
+# - "interval": the observed value must meet it AND so must the whole 95% interval. An observed value that
+#   misses is a fail, as in "point" mode; one that meets the threshold while its interval straddles it is
+#   "insufficient evidence", because more cases are needed before a pass can be trusted. The stricter rule
+#   can only hold back a pass, never soften a fail.
+EVIDENCE_MODES = ("point", "interval")
+# Criteria whose metric is a rate with a Wilson interval, so "interval" evidence can apply to them.
+RATE_CRITERIA = ("correctness", "citation_validity", "abstention_quality")
+
+
+def validate_criteria(cfg: dict) -> dict:
+    """Reject criteria that would be applied in a way nobody intended. Returns `cfg` unchanged."""
+    for c in cfg.get("criteria", []):
+        if "min_n" in c and c["min_n"] is None:
+            raise ValueError(f"criterion {c['id']}: min_n is empty; set a positive integer or remove the key")
+        evidence = c.get("evidence", "point")
+        if evidence not in EVIDENCE_MODES:
+            raise ValueError(f"criterion {c['id']}: evidence must be one of {EVIDENCE_MODES}, not {evidence!r}")
+        if evidence == "interval" and c["id"] not in RATE_CRITERIA:
+            raise ValueError(
+                f"criterion {c['id']}: evidence 'interval' needs a rate criterion ({', '.join(RATE_CRITERIA)})"
+            )
+        min_n = c.get("min_n")
+        if min_n is not None and (not isinstance(min_n, int) or isinstance(min_n, bool) or min_n < 1):
+            raise ValueError(f"criterion {c['id']}: min_n must be a positive integer, not {min_n!r}")
+    return cfg
+
+
+def _criteria_raw() -> str:
+    return (CONFIG_DIR / "launch_criteria.yaml").read_text()
+
+
+def criteria_hash() -> str:
+    """Hash of the current criteria file, computed without validating it, so a bad edit to the file is
+    reported as drift on past runs instead of breaking their frozen verdicts."""
+    return hashlib.sha256(_criteria_raw().encode()).hexdigest()[:12]
+
+
 def criteria_config() -> tuple[dict, str]:
-    raw = (CONFIG_DIR / "launch_criteria.yaml").read_text()
-    return yaml.safe_load(raw), hashlib.sha256(raw.encode()).hexdigest()[:12]
+    raw = _criteria_raw()
+    return validate_criteria(yaml.safe_load(raw)), hashlib.sha256(raw.encode()).hexdigest()[:12]
+
+
+def _interval_state(comp: str, threshold: float, value: float, low: float, high: float) -> str:
+    """Interval evidence: a miss on the observed value fails; a pass also needs the whole interval to clear."""
+    if not OPS[comp](value, threshold):
+        return "fail"
+    clears = low >= threshold if comp == ">=" else high <= threshold
+    return "pass" if clears else "insufficient"
 
 
 def _get(metrics: dict, dotted: str):
@@ -78,11 +126,13 @@ def _examples(criterion_id: str, rows: list[dict], threshold: float) -> list[str
 
 
 def evaluate_criteria(metrics: dict, rows: list[dict], cfg: dict) -> list[dict]:
-    min_n = cfg.get("min_sample_size", 5)
+    default_min_n = cfg.get("min_sample_size", 5)
     min_coverage = cfg.get("min_measurement_coverage", 1.0)
     out = []
     for c in cfg["criteria"]:
         cid, thr, comp = c["id"], c["threshold"], c["comparator"]
+        evidence = c.get("evidence", "point")
+        min_n = c.get("min_n", default_min_n)
         value = _get(metrics, c["metric"])
         entry = {
             "id": cid,
@@ -95,6 +145,8 @@ def evaluate_criteria(metrics: dict, rows: list[dict], cfg: dict) -> list[dict]:
             "state": None,
             "reason": None,
             "confidence": None,
+            "evidence": evidence,
+            "min_n": min_n,
             "example_case_ids": [],
         }
         if cid == "access_safety":
@@ -122,6 +174,15 @@ def evaluate_criteria(metrics: dict, rows: list[dict], cfg: dict) -> list[dict]:
         elif value is None or (entry["n"] is not None and entry["n"] < min_n):
             entry["state"] = "insufficient"
             entry["reason"] = f"only {entry['n'] or 0} evaluated cases (minimum {min_n})"
+        elif evidence == "interval":
+            # Compare the exact bounds: the rounded ones shown to people can round up onto the threshold.
+            low, high = wilson(entry["numerator"], entry["n"], digits=None)
+            entry["state"] = _interval_state(comp, thr, value, low, high)
+            if entry["state"] == "insufficient":
+                entry["reason"] = (
+                    f"95% interval {entry['ci_low']:.1%}–{entry['ci_high']:.1%} straddles the threshold; "
+                    "this criterion requires the whole interval to clear it before it counts as a pass, so more cases are needed"
+                )
         else:
             entry["state"] = "pass" if OPS[comp](value, thr) else "fail"
             if "ci_low" in entry and entry["ci_low"] is not None:
@@ -267,7 +328,7 @@ def build_decision(db: Database, run_id: str) -> dict:
         "n_cases": len({r["case_id"] for r in split_rows}),
         "criteria_version": cfg["version"],
         "criteria_hash": cfg_hash,
-        "criteria_changed_since_run": cfg_hash != criteria_config()[1],
+        "criteria_changed_since_run": cfg_hash != criteria_hash(),
         "correctness_source": cfg.get("correctness_source"),
         "criteria_registered_on": str(cfg.get("registered_on")),
         "target_approach": target,

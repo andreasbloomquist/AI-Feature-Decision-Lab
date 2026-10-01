@@ -7,7 +7,7 @@ This is the plan of record for the AI Feature Decision Lab: what gets built next
 - When a PR merges, update the item's status here in the same PR. Statuses are `Done`, `In progress (#PR)`, `Next` and `Planned`.
 - To add or reorder items, open a PR that edits this file and explains why. The order is a product decision, so it needs the same review as code.
 
-**Last updated:** 2026-09-29
+**Last updated:** 2026-09-30
 
 ## Where the project is today
 
@@ -51,7 +51,7 @@ Effort: **S** is up to about 2 days, **M** is about a week, **L** is more than a
 |---|---|---|---|---|
 | R1.1 | **Designated decision run.** Mark one run as the decision of record. Lock human reviews on its held-out responses | "Which run is the decision based on, and can it still change?" | S | Next |
 | R1.2 | **Held-out usage counter.** Count evaluations of the held-out split per dataset version, and warn when it's more than one | "Did they keep re-running until it passed?" | S | Next |
-| R1.3 | **Confidence-aware criteria.** Per criterion, choose whether the point estimate or the lower bound of the 95% interval must clear the threshold. Set a minimum n per criterion (for example, at least 30 access-denied cases for the zero-leak check) | Passing on 4 cases, or at 28/35 | S | Next |
+| R1.3 | **Confidence-aware criteria.** Per criterion, choose whether the point estimate or the lower bound of the 95% interval must clear the threshold. Set a minimum n per criterion (for example, at least 30 access-denied cases for the zero-leak check) | Passing on 4 cases, or at 28/35 | S | In progress (#4) |
 | R1.4 | **Sample-size planner.** Given an expected rate and a threshold, say how many cases are needed | "How many questions do I need?" | S | Planned |
 | R1.5 | **Paired lift with an interval.** Target versus baseline on the same cases: wins, losses and ties, with a confidence interval | "Is it really better than search?" | S | Planned |
 | R1.6 | **Decision record.** The PM's final call, rationale, approvers and date, linked to the run and the criteria hash | "Why did we launch?" six months later | S | Planned |

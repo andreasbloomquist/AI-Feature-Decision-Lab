@@ -131,6 +131,7 @@ def test_decision_uses_criteria_stored_with_the_run(db, monkeypatch):
     stored_cfg, stored_hash = decision.criteria_config()
     edited = {**stored_cfg, "criteria": [{**c, "threshold": 0.0} for c in stored_cfg["criteria"]]}
     monkeypatch.setattr(decision, "criteria_config", lambda: (edited, "edited-hash"))
+    monkeypatch.setattr(decision, "criteria_hash", lambda: "edited-hash")
     after = build_decision(db, run_id)
     assert after["approaches"] == before["approaches"]  # thresholds edited after the run have no effect
     assert after["criteria_hash"] == stored_hash
@@ -214,3 +215,132 @@ def test_decision_limitations_come_from_run_snapshot_not_todays_dataset(db, monk
     monkeypatch.setattr(dataset, "load_dataset", lambda: {"cases": [], "by_id": {}})
     n = len(db.get_run(run_id)["config_snapshot"]["dataset_cases"])
     assert build_decision(db, run_id)["limitations"][0].startswith(f"{n} synthetic questions")
+
+
+def correctness_cfg(**extra) -> dict:
+    criterion = {
+        "id": "correctness",
+        "label": "Correct answers",
+        "metric": "correctness.value",
+        "comparator": ">=",
+        "threshold": 0.8,
+        "unit": "rate",
+        **extra,
+    }
+    return {"min_sample_size": 5, "criteria": [criterion]}
+
+
+def correctness_metrics(k: int, n: int) -> dict:
+    from app.metrics import rate
+
+    return {"correctness": rate(k, n)}
+
+
+def test_interval_evidence_needs_the_whole_interval_to_clear_the_threshold():
+    cfg = correctness_cfg(evidence="interval")
+    # 32/35 = 91%, interval 78–97%: passes on the point estimate, but the interval straddles 80%.
+    (straddles,) = evaluate_criteria(correctness_metrics(32, 35), [], cfg)
+    assert straddles["state"] == "insufficient" and "straddles the threshold" in straddles["reason"]
+    assert straddles["evidence"] == "interval"
+    (clear,) = evaluate_criteria(correctness_metrics(950, 1000), [], cfg)
+    assert clear["state"] == "pass"
+    (miss,) = evaluate_criteria(correctness_metrics(20, 35), [], cfg)
+    assert miss["state"] == "fail" and miss["ci_high"] < 0.8
+
+
+def test_point_evidence_is_the_default_so_stored_runs_keep_their_verdict():
+    (entry,) = evaluate_criteria(correctness_metrics(32, 35), [], correctness_cfg())
+    assert entry["state"] == "pass" and entry["evidence"] == "point" and entry["confidence"] == "low"
+
+
+def test_per_criterion_min_n_overrides_the_global_minimum():
+    (entry,) = evaluate_criteria(correctness_metrics(32, 35), [], correctness_cfg(min_n=40))
+    assert entry["state"] == "insufficient" and "minimum 40" in entry["reason"] and entry["min_n"] == 40
+
+
+def test_a_disclosure_fails_even_below_a_per_criterion_min_n():
+    cfg = {
+        "min_sample_size": 5,
+        "criteria": [
+            {
+                "id": "access_safety",
+                "label": "No disclosure",
+                "metric": "access_safety.disclosures",
+                "comparator": "<=",
+                "threshold": 0,
+                "unit": "count",
+                "min_n": 100,
+            }
+        ],
+    }
+    metrics = {"access_safety": {"disclosures": 1, "n_cases": 10}}
+    (entry,) = evaluate_criteria(metrics, [], cfg)
+    assert entry["state"] == "fail"
+    metrics["access_safety"]["disclosures"] = 0
+    (entry,) = evaluate_criteria(metrics, [], cfg)
+    assert entry["state"] == "insufficient" and "minimum 100" in entry["reason"]
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        ({"evidence": "vibes"}, "evidence must be one of"),
+        ({"evidence": "interval", "id": "latency_p95"}, "needs a rate criterion"),
+        ({"min_n": 0}, "min_n must be a positive integer"),
+        ({"min_n": "30"}, "min_n must be a positive integer"),
+    ],
+)
+def test_invalid_criteria_options_are_rejected(extra, message):
+    with pytest.raises(ValueError, match=message):
+        decision.validate_criteria(correctness_cfg(**extra))
+
+
+def test_the_committed_launch_criteria_file_is_valid():
+    cfg, _ = decision.criteria_config()
+    assert cfg["criteria"]
+
+
+def test_interval_evidence_never_softens_a_fail():
+    # 26/35 = 74% misses 80%. Its interval (58–86%) straddles 80%, but a miss on the observed value
+    # must stay a fail: the stricter rule can only hold back a pass.
+    (entry,) = evaluate_criteria(correctness_metrics(26, 35), [], correctness_cfg(evidence="interval"))
+    assert entry["state"] == "fail"
+    assert recommend([*ALL_PASS[:1], entry, *ALL_PASS[2:]], is_fixture=False)["verdict"] == "do_not_launch_yet"
+
+
+def test_interval_evidence_compares_exact_bounds_not_rounded_ones():
+    # 87/99: the exact lower bound is 0.799992, which rounds to 0.8 for display. It must not pass >= 0.8.
+    (entry,) = evaluate_criteria(correctness_metrics(87, 99), [], correctness_cfg(evidence="interval"))
+    assert entry["ci_low"] == 0.8 and entry["state"] == "insufficient"
+
+
+@pytest.mark.parametrize(
+    ("comp", "value", "low", "high", "state"),
+    [
+        (">=", 0.9, 0.8, 0.95, "pass"),  # lower bound exactly on the threshold clears it
+        (">=", 0.85, 0.79, 0.9, "insufficient"),
+        (">=", 0.79, 0.7, 0.85, "fail"),
+        ("<=", 0.1, 0.05, 0.2, "pass"),  # upper bound exactly on the threshold clears it
+        ("<=", 0.15, 0.1, 0.21, "insufficient"),
+        ("<=", 0.21, 0.15, 0.3, "fail"),
+    ],
+)
+def test_interval_state_for_both_comparators(comp, value, low, high, state):
+    threshold = 0.8 if comp == ">=" else 0.2
+    assert decision._interval_state(comp, threshold, value, low, high) == state
+
+
+def test_an_empty_min_n_is_rejected_instead_of_crashing_the_decision():
+    with pytest.raises(ValueError, match="min_n is empty"):
+        decision.validate_criteria(correctness_cfg(min_n=None))
+
+
+def test_an_invalid_criteria_file_is_drift_not_a_crash_for_past_runs(db, monkeypatch, tmp_path):
+    run_id = run_evaluation(
+        db, mode="live", splits=("held_out",), approaches=("search",), llm=ScriptedProvider(str), export_dir=None
+    )
+    bad = tmp_path / "launch_criteria.yaml"
+    bad.write_text("criteria:\n  - {id: correctness, evidence: vibes}\n")
+    monkeypatch.setattr(decision, "CONFIG_DIR", tmp_path)
+    d = build_decision(db, run_id)
+    assert d["criteria_changed_since_run"] is True and d["approaches"]
