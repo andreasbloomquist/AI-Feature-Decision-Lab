@@ -302,6 +302,7 @@ export function DecisionView({ runParam }: { runParam: string | null }) {
                     <th scope="row">{c.label}</th>
                     <td className="mono">
                       {c.comparator} {fmt(c.unit, c.threshold)}
+                      {c.evidence === "interval" && <div className="muted tiny-text">whole 95% interval</div>}
                     </td>
                     {(showAll ? APPROACHES.filter((a) => d.approaches[a]) : [d.target_approach]).map((a) => {
                       const cc = d.approaches[a]!.criteria[i];

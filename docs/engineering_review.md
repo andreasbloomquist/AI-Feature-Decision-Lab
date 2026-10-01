@@ -157,6 +157,15 @@ This round reviewed the code that the second review and the product review had a
 
 From here on, each PR gets its own independent principal-engineer review before it merges. Findings of Medium severity or higher are recorded here with their fix and regression test.
 
+### PR #4: confidence-aware criteria (R1.3)
+
+| # | Severity | Finding | Fix | Regression test |
+|---|---|---|---|---|
+| 51 | High | **The stricter rule softened a fail.** With `evidence: interval`, 26/35 (74%) against an 80% bar became "insufficient evidence", because its interval straddled 80%, and the summary claimed "no criterion failed". | A miss on the observed value is always a fail. `interval` can only hold back a pass whose interval dips below the bar. | `test_interval_evidence_never_softens_a_fail`, `test_interval_state_for_both_comparators` |
+| 52 | Medium | **An empty `min_n:` passed validation and then crashed every decision for that run**, since the snapshot stored the null. | An empty `min_n` is rejected when the file is loaded. | `test_an_empty_min_n_is_rejected_instead_of_crashing_the_decision` |
+| 53 | Low | The interval check compared bounds rounded for display: 87/99 has a lower bound of 0.799992, shown as 80.0%, which passed a bar of 80%. | Decisions compare the exact Wilson bounds. | `test_interval_evidence_compares_exact_bounds_not_rounded_ones` |
+| 54 | Low | A bad edit to the current criteria file broke the Decision view for every past run, because drift detection validated the file. | Drift detection hashes the raw file without validating it. | `test_an_invalid_criteria_file_is_drift_not_a_crash_for_past_runs` |
+
 ### PR #5: decision run of record and held-out usage (R1.1, R1.2)
 
 | # | Severity | Finding | Fix | Regression test |

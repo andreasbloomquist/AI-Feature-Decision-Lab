@@ -251,7 +251,10 @@ def _criteria_table(decision: dict, approach: str) -> str:
             state += f" — {c['reason']}"
         if c["state"] == "fail" and c["example_case_ids"]:
             state += "; e.g. " + ", ".join(c["example_case_ids"][:5])
-        out += f"| {c['label']} | {c['comparator']} {fmt_value(unit, c['threshold'])} | {measured} | {state} |\n"
+        threshold = f"{c['comparator']} {fmt_value(unit, c['threshold'])}"
+        if c.get("evidence") == "interval":
+            threshold += " (whole 95% interval)"
+        out += f"| {c['label']} | {threshold} | {measured} | {state} |\n"
     return out
 
 

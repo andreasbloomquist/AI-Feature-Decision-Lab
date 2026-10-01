@@ -44,7 +44,7 @@ Each of these is enforced by tests. A change that needs to relax one is a produc
 
 | Path | What it does |
 |---|---|
-| `config/launch_criteria.yaml` | The launch criteria: thresholds, target and baseline approach, `min_sample_size`, `min_measurement_coverage`, `max_error_rate`. **Changing a threshold is a product decision: ask first.** |
+| `config/launch_criteria.yaml` | The launch criteria: thresholds, target and baseline approach, `min_sample_size`, `min_measurement_coverage`, `max_error_rate`, and per criterion the optional `evidence` (`point` or `interval`) and `min_n`, validated by `decision.validate_criteria`. **Changing a threshold or an evidence rule is a product decision: ask first.** |
 | `config/approaches/*.yaml`, `config/prompts/*.md` | Per-approach settings and versioned prompts. Changing a prompt means changing its version too |
 | `config/pricing.yaml` | Price per million tokens, per model |
 | `data/corpus/*.md` | Policy documents with front matter. One passage per `##` section |
