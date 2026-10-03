@@ -14,18 +14,26 @@ from typing import Annotated, Literal
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, BeforeValidator, Field, StringConstraints
 
 from .access import ROLE_GROUPS, ROLE_LABELS, can_access, check_role
 from .approaches import APPROACH_NAMES, Approach, ApproachContext, build_approaches
 from .approaches.base import APPROACH_LABELS
 from .corpus import get_corpus
 from .dataset import load_dataset
-from .db import Database
+from .db import Database, WriteRefused
 from .decision import build_decision, criteria_config
 from .evaluation import config_snapshot, ensure_fixture_run, export_run
 from .llm import LLMProvider, make_provider
-from .results import latest_runs, load_rows, summarize_rows
+from .results import (
+    DECISION_SPLIT,
+    designation_blocker,
+    latest_runs,
+    load_rows,
+    run_cases,
+    split_response_ids,
+    summarize_rows,
+)
 from .retrieval import Retriever
 from .schemas import ApproachResponse
 from .settings import RESULTS_DIR, ROOT, Settings, load_settings, public_settings
@@ -189,9 +197,49 @@ def _run_or_404(db: Database, run_id: str) -> dict:
 @app.get("/api/runs")
 def list_runs(db: DbDep) -> list[dict]:
     # `latest` marks the live run the Decision view uses by default, so the UI never has to repeat
-    # the rules for skipping development-only, partial and error-dominated runs.
+    # the rules for skipping development-only, partial and error-dominated runs. `designated` marks the
+    # decision run of record; when there is one, it is also the `latest` run.
     live, _ = latest_runs(db)
-    return [{**r, "latest": live is not None and r["run_id"] == live["run_id"]} for r in db.list_runs()]
+    record = db.current_designation(DECISION_SPLIT)
+    return [
+        {
+            **r,
+            "latest": live is not None and r["run_id"] == live["run_id"],
+            "designated": record is not None and r["run_id"] == record["run_id"],
+        }
+        for r in db.list_runs()
+    ]
+
+
+def _one_line(value: str | None) -> str | None:
+    """Collapse every run of whitespace (newlines, tabs) to one space, so text can't add lines to the memo."""
+    return " ".join(value.split()) if isinstance(value, str) else value
+
+
+class DesignationRequest(BaseModel):
+    # Naming the run a decision rests on is an accountable act, so it says who did it. Like a reviewer
+    # name, it is trusted as typed: the lab has no real identity (PRD, excluded scope).
+    designated_by: Annotated[str, BeforeValidator(_one_line), StringConstraints(min_length=1, max_length=100)]
+    note: Annotated[str, BeforeValidator(_one_line), StringConstraints(max_length=2000)] | None = None
+
+
+@app.post("/api/runs/{run_id}/designate")
+def designate_run(run_id: str, req: DesignationRequest, db: DbDep) -> dict:
+    """Make this run the decision run of record. Earlier designations are kept as an audit trail."""
+    run = _run_or_404(db, run_id)
+    if blocker := designation_blocker(db, run, DECISION_SPLIT):
+        raise HTTPException(409, detail=blocker)
+    try:
+        designation = db.add_designation(
+            run_id,
+            DECISION_SPLIT,
+            req.designated_by,
+            req.note or None,
+            locked_response_ids=split_response_ids(db, run_id, DECISION_SPLIT),
+        )
+    except WriteRefused as e:
+        raise HTTPException(409, detail=str(e)) from e
+    return {"designation": designation, "history": db.designations(DECISION_SPLIT)}
 
 
 @app.get("/api/runs/{run_id}")
@@ -272,10 +320,22 @@ def add_review(response_id: str, req: ReviewRequest, db: DbDep) -> dict:
     row = db.get_response(response_id)
     if not row:
         raise HTTPException(404, detail="response not found")
-    review = db.add_review(response_id, req.verdict, req.note, req.reviewer)
+    run = db.get_run(row["run_id"])
+    in_decision_split = (run_cases(run).get(row["case_id"]) or {}).get("split") == DECISION_SPLIT
+    try:
+        # The lock is checked in the same transaction as the insert, so a designation made in between
+        # cannot let a review through. The decision rests on these labels; changing them would change it.
+        review = db.add_review(
+            response_id,
+            req.verdict,
+            req.note,
+            req.reviewer,
+            lock_split=DECISION_SPLIT if in_decision_split else None,
+        )
+    except WriteRefused as e:
+        raise HTTPException(409, detail=str(e)) from e
     # The automated grade and judge verdict are never modified; the review is stored alongside.
     updated = db.get_response(response_id)
-    run = db.get_run(row["run_id"])
     # Keep the committed export in sync, but never export a run that is still being written.
     if run["mode"] == "live" and run["status"] != "running":
         export_run(db, row["run_id"], RESULTS_DIR / "runs")

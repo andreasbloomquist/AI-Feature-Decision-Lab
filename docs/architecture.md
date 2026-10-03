@@ -24,7 +24,7 @@ flowchart LR
     DEC["Decision<br/>criteria → pass / fail / insufficient"]
   end
 
-  DB[("SQLite<br/>runs · responses · reviews<br/>ask_log · configuration")]
+  DB[("SQLite<br/>runs · responses · reviews<br/>run_designations · ask_log · configuration")]
   EXP["results/runs/*.json<br/>docs/*.md reports"]
 
   subgraph UI["React + TypeScript UI"]
@@ -50,7 +50,7 @@ flowchart LR
   ASK -->|POST /api/ask| S & B & G
   CMP -->|GET /api/runs/:id| DB
   INS -->|GET cases · POST reviews| DB
-  DV -->|GET /api/decision| DEC
+  DV -->|GET /api/decision · POST designate| DEC
   SRC -->|GET /api/documents/:id?role| AUTH
 ```
 
@@ -71,6 +71,7 @@ flowchart LR
 4. Responses, grades and judge verdicts go to SQLite; the run is also exported to `results/runs/<run_id>.json`.
 5. `results.py` loads a run's responses joined to the cases stored with that run. `metrics.py` computes rates with counts and Wilson intervals, latency percentiles and cost from recorded tokens. Metrics are recomputed on read so human reviews count, while the automated grade is preserved.
 6. `decision.py` applies the launch criteria *stored with the run* to its held-out metrics, and flags when `config/launch_criteria.yaml` has changed since. Latency and cost need at least 90% of cases measured. `reports.py` writes the evaluation report and decision memo.
+7. **Which run is decided on.** `results.latest_runs` returns the *decision run of record* when one is designated (`POST /api/runs/{run_id}/designate`, stored in the `run_designations` table; the newest row is current and older rows are the audit trail). Otherwise it returns the newest usable live run: full, completed, covering the held-out split, with the target approach, and not dominated by errors. Only a run that meets those same rules, and whose stored criteria evaluate the held-out split (`results.DECISION_SPLIT`, the one split used by designation, lock and count), can be designated. A run that had held-out reviews after its first designation can't be designated again. While a run is designated, `POST /api/responses/{id}/reviews` returns 409 for its held-out responses; the lock is checked inside the insert's `BEGIN IMMEDIATE` transaction (`Database.transaction`), and so is the re-designation check. If the designated run ever stops passing the rules, the decision falls back to the newest usable run and says so (`run_of_record_warning`). `results.held_out_usage` counts the live runs that evaluated the held-out split of a dataset version: any finished status, partial runs included, plus runs still marked `running` that already stored held-out responses (`in_progress_run_ids`). The decision and the memo show it and warn above one.
 
 ## Module map
 
@@ -84,9 +85,9 @@ flowchart LR
 | `backend/app/citations.py` | Marker parsing, validation, redaction |
 | `backend/app/grading.py`, `judge.py`, `metrics.py` | Scoring |
 | `backend/app/evaluation.py` | Runner and CLI |
-| `backend/app/results.py` | Read side of runs: rows joined to cases, success rule, per-split summaries |
+| `backend/app/results.py` | Read side of runs: rows joined to cases, success rule, per-split summaries, the decision run (`latest_runs`, `designation_blocker`) and `held_out_usage` |
 | `backend/app/decision.py`, `reports.py` | Criteria, recommendation, generated docs |
-| `backend/app/db.py` | SQLite schema and queries (WAL, foreign keys, busy timeout) |
+| `backend/app/db.py` | SQLite schema and queries (WAL, foreign keys, busy timeout), including run designations |
 | `frontend/src/useAsync.ts` | Data loading with error state; ignores out-of-order responses |
 | `frontend/src/views/` | Ask, Compare, Inspect, Decision |
 

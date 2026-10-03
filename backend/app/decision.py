@@ -13,7 +13,16 @@ from .corpus import get_corpus
 from .db import Database
 from .grading import citation_is_valid
 from .metrics import wilson
-from .results import load_rows, run_cases, run_validity, summarize_rows
+from .results import (
+    DECISION_SPLIT,
+    designation_blocker,
+    held_out_usage,
+    load_rows,
+    run_cases,
+    run_of_record,
+    run_validity,
+    summarize_rows,
+)
 from .settings import CONFIG_DIR
 
 OPS = {"<=": operator.le, ">=": operator.ge}
@@ -319,6 +328,7 @@ def build_decision(db: Database, run_id: str) -> dict:
 
     # Only a measured failure suggests an experiment; missing evidence is fixed by measuring, not tuning.
     failing = [c["id"] for c in per_approach.get(target, {}).get("criteria", []) if c["state"] == "fail"]
+    record_run, record, record_problem = run_of_record(db)
     return {
         "run_id": run_id,
         "run_mode": run["mode"],
@@ -341,6 +351,25 @@ def build_decision(db: Database, run_id: str) -> dict:
         else [{"criterion": f, "text": NEXT_EXPERIMENTS[f]} for f in failing if f in NEXT_EXPERIMENTS],
         "rollout_tests": ROLLOUT_TESTS,
         "limitations": limitations(split, list(run_cases(run).values())),
+        # The decision run of record: who named this run as the one the decision rests on (null when this
+        # run is not the current designation). Held-out reviews on it are locked.
+        "designation": record if record_run and record["run_id"] == run_id else None,
+        # Every designation, newest first, so a run that was designated, released and designated again
+        # shows that history rather than a single clean "locked" line.
+        "designation_history": db.designations(DECISION_SPLIT),
+        # Set only if the designated run fails the designation rules after all, so the fallback to the
+        # newest usable run is shown rather than silent.
+        "run_of_record_warning": (
+            f"The decision run of record {record['run_id']} is no longer usable: {record_problem} "
+            "The newest usable live run is used instead."
+            if record_problem
+            else None
+        ),
+        # Why this run cannot be designated (null when it can), so the UI only offers what the API accepts.
+        "designation_blocker": designation_blocker(db, run),
+        # How many live runs have looked at the held-out split of this run's dataset version; more than one
+        # means the verdict may reflect tuning against it.
+        "held_out_usage": held_out_usage(db, run["dataset_version"]),
     }
 
 
@@ -367,6 +396,21 @@ def human_override_note(decision: dict) -> str | None:
     if confirmed:
         note += f" {confirmed} more review(s) confirmed the automated label."
     return note + " Check those reviews in the Inspect view before relying on this verdict or the comparison."
+
+
+def held_out_usage_warning(decision: dict) -> str | None:
+    """A warning when the held-out set of the decision's dataset version was evaluated more than once.
+
+    Each extra look at held-out results is a chance to tune against them, so a pass after several runs is
+    weaker evidence than a pass on the first.
+    """
+    usage = decision.get("held_out_usage") or {}
+    n = usage.get("evaluations", 0)
+    if n <= 1:
+        return None
+    in_progress = set(usage.get("in_progress_run_ids") or [])
+    runs = ", ".join(f"{r} (in progress)" if r in in_progress else r for r in usage["run_ids"])
+    return f"The held-out set has been evaluated {n} times; the verdict may reflect tuning against it. Runs: {runs}."
 
 
 def _comparison(split_metrics: dict, target: str, baseline: str) -> dict | None:

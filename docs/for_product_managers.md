@@ -124,6 +124,12 @@ A pass whose interval crosses the threshold is labelled as such: it passed, but 
 
 ### 5. Make and communicate the decision
 
+**First, name the run the decision rests on.** In the Decision view, open the run you're deciding on and use **Mark as decision run of record**: enter your name and, optionally, a note such as the meeting where it was agreed. The name is trusted as typed, like a reviewer's name: the lab has no real sign-in, so it records who says they designated the run, not a verified identity (see the [PRD](PRD.md#scope), excluded scope). Only a completed, full live run that covers the held-out set and isn't dominated by errors can be marked; fixture, partial and development-only runs can't. From then on:
+- **The Decision view and the memo use that run,** even when newer runs exist. The run picker labels it "run of record", and the memo says who marked it and when.
+- **Human reviews of its held-out answers are locked.** Nobody can change a held-out label after the decision, so the verdict can't move under you. Reviews of development answers stay open. If you need to change the decision, mark a different run: that moves the designation and unlocks the old run. A run whose held-out answers were reviewed while it was unlocked can't be marked again, because the lab would otherwise present those changed labels as locked; mark a different run or run a fresh evaluation. Every designation is kept, and once the run of record has moved, the Decision view and the memo list the full history (who, when, which run).
+
+**Then check how often the held-out set was used.** The Decision view and the memo count how many live runs have evaluated the held-out set of the dataset version used by the run you're looking at, including partial and failed runs, and runs still marked in progress that already stored held-out answers, because each one showed someone held-out results. Once is what you want. More than once shows a warning: *the held-out set has been evaluated N times; the verdict may reflect tuning against it*. That doesn't make the result wrong, but you should know why each run happened, and a skeptical reviewer will ask. A fresh held-out set is the clean fix (roadmap item [R3.6](ROADMAP.md#m3-a-team-process)).
+
 The [decision memo](decision_memo.md) is generated from the run (`make reports`). It holds the proposed action, the evidence table, the main failure modes with case IDs, the limits of the experiment, and what to test before a real rollout. Treat it as a first draft:
 - **Add what the numbers can't show:** strategic fit, cost of delay, support load, how users will react to abstentions.
 - **Be explicit about the limits.** Sixty synthetic questions justify a *pilot* decision at most, not a general launch.
@@ -140,7 +146,7 @@ A 45-minute agenda that works well with the lab open on a shared screen:
 1. **The question and the bar** (5 min): read the product question and the criteria aloud. Confirm nobody wants to change them now; if they do, that's a new run, not an edit.
 2. **The scorecard** (10 min): Compare view, held-out split. Correctness lift over the baseline, then each criterion with its count and interval.
 3. **Failures** (15 min): Inspect view, filtered to failures of the target approach. Walk through two or three cases in each failure category. Ask the policy owners whether the grades are right.
-4. **The proposal** (10 min): Decision view. Does the group agree with the proposed action? If not, what evidence would change their mind?
+4. **The proposal** (10 min): Decision view. Check the held-out usage count, then ask whether the group agrees with the proposed action. If not, what evidence would change their mind? If it does, mark the run as the decision run of record before the meeting ends.
 5. **Next step** (5 min): the pilot plan, or the next experiment and who runs it.
 
 ## Common questions

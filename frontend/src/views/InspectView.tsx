@@ -119,6 +119,7 @@ export function InspectView({ route }: { route: Route }) {
               focus={focus}
               onFocus={(a) => set({ focus: a })}
               isFixture={run?.mode === "fixture"}
+              isRunOfRecord={run?.designated === true}
               onReviewed={() => {
                 // Same selection, fresh data: reload keeps the current rows on screen meanwhile.
                 rows.reload();
@@ -153,12 +154,14 @@ function CaseDetailPanel({
   focus,
   onFocus,
   isFixture,
+  isRunOfRecord,
   onReviewed,
 }: {
   detail: CaseDetail;
   focus: ApproachId | null;
   onFocus: (a: ApproachId) => void;
   isFixture: boolean;
+  isRunOfRecord: boolean;
   onReviewed: () => void;
 }) {
   const c = detail.case;
@@ -288,7 +291,13 @@ function CaseDetailPanel({
         </p>
       </details>
 
-      <ReviewBox key={row.response_id} responseId={row.response_id} reviews={row.reviews} canReview={c.answerability === "answerable"} onReviewed={onReviewed} />
+      <ReviewBox
+        key={row.response_id}
+        responseId={row.response_id}
+        reviews={row.reviews} canReview={c.answerability === "answerable"}
+        locked={isRunOfRecord && c.split === "held_out"}
+        onReviewed={onReviewed}
+      />
       <p className="small">
         <a href={href("ask", { q: c.question, role: c.user_role })}>Try this question in Ask →</a>
       </p>
@@ -317,11 +326,14 @@ function ReviewBox({
   responseId,
   reviews,
   canReview,
+  locked,
   onReviewed,
 }: {
   responseId: string;
   reviews: CaseDetail["responses"][0]["reviews"];
   canReview: boolean;
+  /** A held-out response of the decision run of record: the backend refuses new reviews (HTTP 409). */
+  locked: boolean;
   onReviewed: () => void;
 }) {
   // No default verdict: a review overrides the automated label, so it has to be a deliberate choice.
@@ -366,6 +378,12 @@ function ReviewBox({
         {!canReview &&
           " This case isn't scored on correctness, so the verdict you choose is recorded with your note but doesn't change any metric."}
       </p>
+      {locked && (
+        <div className="notice notice-record" role="note">
+          <strong>Reviews are locked.</strong> This response belongs to the decision run of record, and it's a held-out case, so its label can't
+          change the verdict after the decision was taken. To review it, move the run of record to another run in the Decision view.
+        </div>
+      )}
       <div className="review-form">
         <div className="radio-row" role="radiogroup" aria-label="Verdict">
           {Object.entries(LABEL_COPY).map(([k, v]) => (
@@ -377,7 +395,7 @@ function ReviewBox({
         <textarea aria-label="Review note" placeholder="Note (what is right or wrong, and why)" value={note} onChange={(e) => setNote(e.target.value)} rows={2} />
         <div className="review-actions">
           <input aria-label="Reviewer name" placeholder="Your name (required)" required value={reviewer} onChange={(e) => setReviewer(e.target.value)} />
-          <button className="btn" onClick={save} disabled={saving || !verdict || !reviewer.trim()}>
+          <button className="btn" onClick={save} disabled={locked || saving || !verdict || !reviewer.trim()}>
             {saving ? "Saving…" : "Save review"}
           </button>
         </div>

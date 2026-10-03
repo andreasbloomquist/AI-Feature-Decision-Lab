@@ -25,7 +25,7 @@ The milestones below close those gaps in order.
 | Milestone | Outcome | Exit test | Status |
 |---|---|---|---|
 | **M0: Trustworthy baseline** | The Northstar decision can't be skewed by broken runs, debug runs, silent human overrides or leaks hidden by small samples | A review by a principal engineer and a PM finds no path to a wrong recommendation | Done ([#1](https://github.com/andreasbloomquist/AI-Feature-Decision-Lab/pull/1)) |
-| **M1: A verdict a skeptic accepts** | Anyone can see whether labels were changed, how often the held-out set was used, and whether a pass is statistically meaningful | A skeptical Security lead reads one screen and can answer all three questions | Next |
+| **M1: A verdict a skeptic accepts** | Anyone can see whether labels were changed, how often the held-out set was used, and whether a pass is statistically meaningful | A skeptical Security lead reads one screen and can answer all three questions | In progress (#4 merged, #5 open) |
 | **M2: Works on your feature** | A PM on another team evaluates their own Q&A system with their own questions, without touching Python | That PM plugs in their team's endpoint and 150 real support tickets, runs two iterations, and compares them | Planned |
 | **M3: A team process** | Risk owners sign off on criteria, reviewers share the grading load, and the decision is shared outside the app | A full decision review runs from the exported report, with signed criteria and a sampled review queue | Planned |
 | **M4: Beyond Q&A** | The lab can evaluate summarization, classification and extraction features | One non-RAG feature goes through a full decision | Planned |
@@ -49,9 +49,9 @@ Effort: **S** is up to about 2 days, **M** is about a week, **L** is more than a
 
 | ID | Item | Problem it solves | Effort | Status |
 |---|---|---|---|---|
-| R1.1 | **Designated decision run.** Mark one run as the decision of record. Lock human reviews on its held-out responses | "Which run is the decision based on, and can it still change?" | S | Next |
-| R1.2 | **Held-out usage counter.** Count evaluations of the held-out split per dataset version, and warn when it's more than one | "Did they keep re-running until it passed?" | S | Next |
-| R1.3 | **Confidence-aware criteria.** Per criterion, choose whether the point estimate or the lower bound of the 95% interval must clear the threshold. Set a minimum n per criterion (for example, at least 30 access-denied cases for the zero-leak check) | Passing on 4 cases, or at 28/35 | S | In progress (#4) |
+| R1.1 | **Designated decision run.** Mark one run as the decision of record. Lock human reviews on its held-out responses | "Which run is the decision based on, and can it still change?" | S | In progress (#5) |
+| R1.2 | **Held-out usage counter.** Count evaluations of the held-out split per dataset version, and warn when it's more than one | "Did they keep re-running until it passed?" | S | In progress (#5) |
+| R1.3 | **Confidence-aware criteria.** Per criterion, choose whether the point estimate or the lower bound of the 95% interval must clear the threshold. Set a minimum n per criterion (for example, at least 30 access-denied cases for the zero-leak check) | Passing on 4 cases, or at 28/35 | S | Done (#4) |
 | R1.4 | **Sample-size planner.** Given an expected rate and a threshold, say how many cases are needed | "How many questions do I need?" | S | Planned |
 | R1.5 | **Paired lift with an interval.** Target versus baseline on the same cases: wins, losses and ties, with a confidence interval | "Is it really better than search?" | S | Planned |
 | R1.6 | **Decision record.** The PM's final call, rationale, approvers and date, linked to the run and the criteria hash | "Why did we launch?" six months later | S | Planned |

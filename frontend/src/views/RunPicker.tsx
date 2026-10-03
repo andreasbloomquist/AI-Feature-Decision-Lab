@@ -5,7 +5,8 @@ import { useAsync } from "../useAsync";
 export function runLabel(r: RunSummary): string {
   const date = r.created_at.replace("T", " ").replace("Z", " UTC");
   const scope = r.splits.length === 1 ? ` · ${r.splits[0].replace("_", "-")} only` : "";
-  return r.mode === "fixture" ? `DEMO · fixture data · ${date}` : `LIVE · ${r.model_config.model} · ${date}${scope}`;
+  const record = r.designated ? " · run of record" : "";
+  return r.mode === "fixture" ? `DEMO · fixture data · ${date}` : `LIVE · ${r.model_config.model} · ${date}${scope}${record}`;
 }
 
 /**
